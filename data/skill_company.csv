@@ -1,0 +1,46 @@
+employee_count,skill_category,skill_name,experience_level,years_exp,hourly_rate_usd,certification
+12,Backend Development,Python/Django,Junior,1-2,45,Django Certified
+8,Backend Development,Python/Django,Mid-level,3-4,75,Django Certified
+5,Backend Development,Python/Django,Senior,5+,120,Django Advanced
+10,Backend Development,FastAPI/Python,Junior,1-2,50,Python Certified
+6,Backend Development,FastAPI/Python,Mid-level,3-4,85,Python Certified
+3,Backend Development,FastAPI/Python,Senior,5+,130,Python Advanced
+15,Frontend Development,React.js,Junior,1-2,40,React Certified
+10,Frontend Development,React.js,Mid-level,3-4,70,React Certified
+6,Frontend Development,React.js,Senior,5+,110,React Advanced
+8,Frontend Development,Angular,Junior,1-2,42,Angular Certified
+5,Frontend Development,Angular,Mid-level,3-4,72,Angular Certified
+3,Frontend Development,Angular,Senior,5+,115,Angular Advanced
+12,Full Stack Development,MERN Stack,Junior,1-2,55,Full Stack Certified
+8,Full Stack Development,MERN Stack,Mid-level,3-4,90,Full Stack Certified
+4,Full Stack Development,MERN Stack,Senior,5+,140,Full Stack Advanced
+6,Data Science,Machine Learning,Junior,1-2,60,ML Certified
+4,Data Science,Machine Learning,Mid-level,3-4,100,ML Certified
+2,Data Science,Machine Learning,Senior,5+,160,ML Advanced
+5,Data Science,Data Engineering,Junior,1-2,55,Data Eng Certified
+3,Data Science,Data Engineering,Mid-level,3-4,95,Data Eng Certified
+2,Data Science,Data Engineering,Senior,5+,150,Data Eng Advanced
+8,DevOps,AWS/Cloud,Junior,1-2,50,AWS Associate
+6,DevOps,AWS/Cloud,Mid-level,3-4,85,AWS Professional
+3,DevOps,AWS/Cloud,Senior,5+,135,AWS Solutions Architect
+7,DevOps,Docker/Kubernetes,Junior,1-2,48,Docker Certified
+5,DevOps,Docker/Kubernetes,Mid-level,3-4,82,Kubernetes Admin
+3,DevOps,Docker/Kubernetes,Senior,5+,130,Kubernetes Expert
+10,Quality Assurance,Automation Testing,Junior,1-2,35,ISTQB Certified
+6,Quality Assurance,Automation Testing,Mid-level,3-4,60,ISTQB Advanced
+3,Quality Assurance,Automation Testing,Senior,5+,95,ISTQB Expert
+4,Database,SQL/PostgreSQL,Junior,1-2,40,Database Certified
+3,Database,SQL/PostgreSQL,Mid-level,3-4,70,Database Admin
+2,Database,SQL/PostgreSQL,Senior,5+,110,Database Architect
+5,Database,MongoDB/NoSQL,Junior,1-2,42,MongoDB Certified
+3,Database,MongoDB/NoSQL,Mid-level,3-4,72,MongoDB Admin
+2,Database,MongoDB/NoSQL,Senior,5+,115,MongoDB Architect
+6,Mobile Development,React Native,Junior,1-2,45,Mobile Dev Certified
+4,Mobile Development,React Native,Mid-level,3-4,75,Mobile Dev Advanced
+2,Mobile Development,React Native,Senior,5+,120,Mobile Architect
+3,Security,Application Security,Junior,1-2,55,Security+ Certified
+2,Security,Application Security,Mid-level,3-4,95,CISSP Associate
+1,Security,Application Security,Senior,5+,150,CISSP
+8,Project Management,Agile/Scrum,Mid-level,3-4,80,Scrum Master
+4,Project Management,Agile/Scrum,Senior,5+,120,PMP Certified
+2,Project Management,Technical Lead,Senior,8+,150,PMP + Technical

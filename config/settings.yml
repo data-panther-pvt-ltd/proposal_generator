@@ -1,0 +1,376 @@
+## 2. /config/settings.yml
+
+# Proposal Generator Configuration
+# AzmX - Enterprise Proposal Generation System
+# Version: 2.0.0
+
+company:
+  name: "AzmX"
+  location: "Riyadh, KSA"
+  tagline: "Excellence in Digital Transformation"
+  website: "https://azmx.sa/"
+  email: "info@azmx.sa"
+
+
+rfp:
+  pdf_path: "docs/MOT.pdf"  # Relative path to PDF file
+  auto_extract_info: true
+  client_name: ""
+  project_name: ""
+  project_type: ""
+  auto_process: true
+  timeline: "As per RFP requirements"
+  budget_range: "As per RFP specifications"
+  special_requirements:
+    - "Address all RFP requirements"
+    - "Include compliance matrix"
+    - "Match evaluation criteria"
+
+# OpenAI Configuration
+openai:
+  model: "gpt-4o"  # Using latest GPT-4o for all agents
+  api_key_env: "OPENAI_API_KEY"
+  max_retries: 3
+  timeout: 120
+  organization: "azmx-org"
+
+# Agent Configurations
+agents:
+  coordinator:
+    name: "Proposal Coordinator"
+    description: "Orchestrates the proposal generation workflow"
+    model: "gpt-4o"
+    temperature: 0.7  # Very low for consistency
+    max_tokens: 2000
+    top_p: 0.95
+    frequency_penalty: 0
+    presence_penalty: 0
+    instruction_file: "proposal_agents/coordinator.md"
+    tools:
+      - "route_section"
+      - "track_progress"
+      - "validate_completeness"
+    
+  content_generator:
+    name: "Content Generator Agent"
+    description: "Creates professional proposal content"
+    model: "gpt-4o"
+    temperature: 0.7  # Balanced for creativity with consistency
+    max_tokens: 3000
+    top_p: 0.95
+    frequency_penalty: 0.1
+    presence_penalty: 0.1
+    instruction_file: "proposal_agents/content_generator.md"
+    tools:
+      - "generate_content"
+      - "format_section"
+      - "enhance_text"
+    
+  researcher:
+    name: "Research Agent"
+    description: "Conducts web research and analyzes information"
+    model: "gpt-4o"
+    temperature: 0.7  # Low for factual accuracy
+    max_tokens: 2000
+    top_p: 0.95
+    frequency_penalty: 0
+    presence_penalty: 0
+    instruction_file: "proposal_agents/researcher.md"
+    tools:
+      - "web_search"
+      - "analyze_data"
+      - "summarize_findings"
+    
+  budget_calculator:
+    name: "Budget Calculator Agent"
+    description: "Calculates project costs and timelines"
+    model: "gpt-4o"
+    temperature: 0.7  # Extremely low for accurate calculations
+    max_tokens: 2000
+    top_p: 1.0
+    frequency_penalty: 0
+    presence_penalty: 0
+    instruction_file: "proposal_agents/budget_calculator.md"
+    tools:
+      - "calculate_costs"
+      - "forecast_timeline"
+      - "optimize_resources"
+    
+  quality_evaluator:
+    name: "Quality Evaluator Agent"
+    description: "Evaluates and scores generated content"
+    model: "gpt-4o"
+    temperature: 0.7  # Very low for consistent scoring
+    max_tokens: 1500
+    top_p: 0.95
+    frequency_penalty: 0
+    presence_penalty: 0
+    instruction_file: "proposal_agents/quality_evaluator.md"
+    tools:
+      - "evaluate_quality"
+      - "score_section"
+      - "recommend_improvements"
+
+# Section Routing Configuration
+section_routing:
+  "Executive Summary":
+    agents: ["content_generator"]
+    strategy: "synthesis"
+    requires_context: true
+    min_words: 300
+    max_words: 500
+    
+  "Problem or Need Statement":
+    agents: ["researcher", "content_generator"]
+    strategy: "research_first"
+    requires_context: true
+    min_words: 400
+    max_words: 700
+    
+  "Project Scope":
+    agents: ["content_generator"]
+    strategy: "structured_generation"
+    requires_context: true
+    min_words: 350
+    max_words: 800
+    
+  "Proposed Solution":
+    agents: ["researcher", "content_generator"]
+    strategy: "research_enhanced"
+    requires_context: true
+    min_words: 450
+    max_words: 1200
+    
+  "List of Deliverables":
+    agents: ["content_generator"]
+    strategy: "structured_list"
+    requires_context: true
+    min_words: 300
+    max_words: 600
+    
+  "Technical Approach and Methodology":
+    agents: ["content_generator"]
+    strategy: "technical_detailed"
+    requires_context: true
+    use_skills: true
+    min_words: 600
+    max_words: 1500
+    
+  "Project Plan and Timelines":
+    agents: ["content_generator"]
+    strategy: "structured_generation"
+    requires_context: true
+    min_words: 400
+    max_words: 900
+    
+  "Budget":
+    agents: ["budget_calculator"]
+    strategy: "calculation_based"
+    requires_context: true
+    use_skills: true
+    min_words: 350
+    max_words: 800
+    
+  "Risk Analysis and Mitigation":
+    agents: ["content_generator"]
+    strategy: "risk_assessment"
+    requires_context: true
+    min_words: 400
+    max_words: 900
+    
+  "Our Team/Company Profile":
+    agents: ["content_generator"]
+    strategy: "company_showcase"
+    requires_context: false
+    min_words: 350
+    max_words: 700
+    
+  "Success Stories/Case Studies":
+    agents: ["researcher", "content_generator"]
+    strategy: "case_study_format"
+    requires_context: false
+    min_words: 400
+    max_words: 1000
+    
+  "Implementation Strategy":
+    agents: ["content_generator"]
+    strategy: "phased_approach"
+    requires_context: true
+    min_words: 450
+    max_words: 1000
+    
+  "Support and Maintenance":
+    agents: ["content_generator"]
+    strategy: "sla_focused"
+    requires_context: true
+    min_words: 400
+    max_words: 600
+    
+  "Terms and Conditions":
+    agents: ["content_generator"]
+    strategy: "legal_standard"
+    requires_context: false
+    min_words: 350
+    max_words: 800
+    
+  "Conclusion":
+    agents: ["content_generator"]
+    strategy: "call_to_action"
+    requires_context: true
+    min_words: 200
+    max_words: 400
+
+# Quality Thresholds
+quality:
+  min_section_score: 7.0
+  min_overall_score: 7.5
+  max_regeneration_attempts: 3
+  evaluation_criteria:
+    - relevance: 0.25
+    - technical_accuracy: 0.25
+    - clarity: 0.20
+    - completeness: 0.20
+    - professionalism: 0.10
+
+# Charts Configuration
+
+# Output Configuration
+# Output Configuration
+output:
+  format: "html"
+  enable_pdf: true
+  enable_docx: true   # <-- add this flag
+  include_charts: false
+  template_path: "templates/proposal_template.html"
+  output_directory: "generated_proposals"
+  artifacts_directory: "artifacts"
+  filename_pattern: "proposal_{client}_{date}.{format}"
+
+# Data Sources
+data:
+  skills_internal: "data/skill_company.csv"
+  skills_external: "data/skill_external.csv"
+  company_profile: "data/company_profile.md"
+  case_studies: "data/company_profile.md"
+
+# RFP Processing Configuration
+
+
+# Web Search Configuration
+web_search:
+  provider: "openai"  # Options: "openai" or "tavily"
+  openai_browsing: true  # Use OpenAI's Responses API web search
+  tavily_enabled: false  # Use Tavily API for web search
+  max_results: 5
+  search_depth: "advanced"
+
+# Vector Database Configuration
+vector_db:
+  enabled: true
+  cache_directory: "vector_db"
+  embedding_model: "text-embedding-ada-002"
+  embedding_dimensions: 1536
+  chunk_size: 800
+  chunk_overlap: 120  # 15% of chunk_size
+  chunk_strategy: "semantic"
+  min_chunk_size: 100
+  index_type: "auto"  # Automatically select based on dataset size
+  use_gpu: false
+  batch_size: 100
+  search_k: 10  # Number of similar chunks to retrieve
+  rerank_top_k: 5  # Number of chunks after reranking
+  enable_hyde: false  # Hypothetical Document Embeddings - disabled for single query
+  enable_multi_query: false  # Generate multiple query variations - disabled for single query
+
+# Logging
+logging:
+  level: "DEBUG"  # Changed to DEBUG for detailed logging
+  file: "logs/proposal_generator.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  console_level: "INFO"
+  agent_logs_dir: "logs/agents"
+  save_agent_interactions: true
+  log_api_calls: true
+  log_token_usage: true
+  colored_output: true
+
+# Performance
+performance:
+  enable_caching: true
+  cache_ttl: 3600  # 1 hour
+  parallel_processing: true
+  max_workers: 4
+  batch_size: 3
+
+# API Keys (use environment variables)
+api_keys:
+  openai: "${OPENAI_API_KEY}"
+  tavily: "${TAVILY_API_KEY}"
+  
+# Cost Management Configuration
+cost_management:
+  enabled: true
+  daily_budget: 100.0  # $100 daily budget
+  monthly_budget: 2000.0  # $2000 monthly budget
+  alert_thresholds: [0.7, 0.9]  # Alert at 70% and 90% of budget
+  cost_tracking_db: "cost_tracking.db"
+  export_reports: true
+  auto_optimization: true
+  model_optimization: true
+  caching_enabled: true
+  
+  # Cost optimization strategies
+  optimization:
+    model_selection_rules:
+      simple_tasks: "gpt-4o-mini"
+      complex_tasks: "gpt-4o"
+      calculation_tasks: "gpt-4o"
+      research_tasks: "gpt-4o"
+    
+    # Token limits per section to prevent runaway costs
+    section_token_limits:
+      "Executive Summary": 1000
+      "Problem or Need Statement": 1200
+      "Project Scope": 1500
+      "Proposed Solution": 2000
+      "List of Deliverables": 800
+      "Technical Approach and Methodology": 2500
+      "Project Plan and Timelines": 1500
+      "Budget": 1200
+      "Risk Analysis and Mitigation": 1500
+      "Our Team/Company Profile": 1000
+      "Success Stories/Case Studies": 1800
+      "Implementation Strategy": 1500
+      "Support and Maintenance": 800
+      "Terms and Conditions": 1000
+      "Conclusion": 600
+    
+    # Caching configuration
+    cache_settings:
+      enable_response_cache: true
+      cache_ttl: 86400  # 24 hours
+      semantic_similarity_threshold: 0.85
+      max_cache_size: 1000
+  
+  # Email alerts (requires SMTP configuration)
+  email_alerts:
+    enabled: false
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    from_email: "alerts@azmx.com"
+    to_emails: ["admin@azmx.com"]
+  
+  # Webhook alerts
+  webhook_alerts:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/your-webhook-url"
+    alert_channel: "#proposal-alerts"
+
+# Feature Flags
+features:
+  enable_web_search: true
+  enable_auto_save: true
+  enable_version_control: true
+  enable_collaboration: false
+  enable_analytics: true
+  enable_cost_tracking: true

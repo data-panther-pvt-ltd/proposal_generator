@@ -1,0 +1,292 @@
+/* Responsive tables and layout guards */
+.proposal-container {
+  max-width: 100%;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.section {
+  padding: 16px;
+  position: relative;
+  z-index: 2;
+}
+
+.section-content {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  position: relative;
+  z-index: 3;
+}
+
+/* Table Container - Enhanced positioning and z-index handling */
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 12px 0;
+  position: relative;
+  z-index: 4;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 4px;
+}
+
+/* Table Styling - Improved positioning and containment */
+.table-container table,
+.section-content table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; /* prevent overflow by distributing columns */
+  position: relative;
+  z-index: 5;
+  background: white;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* Table Headers - Enhanced styling */
+.table-container th,
+.section-content th {
+  border: 1px solid #d0d7de;
+  padding: 12px 10px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: linear-gradient(135deg, #2E86AB 0%, #4A90A4 100%);
+  color: white;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.85em;
+  letter-spacing: 0.5px;
+  position: relative;
+  z-index: 6;
+}
+
+/* Table Cells - Enhanced styling */
+.table-container td,
+.section-content td {
+  border: 1px solid #e0e0e0;
+  padding: 10px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: white;
+  position: relative;
+  z-index: 5;
+}
+
+/* Table Row Styling */
+.table-container tbody tr:nth-child(even),
+.section-content tbody tr:nth-child(even) {
+  background-color: #f8f9fa !important;
+}
+
+.table-container tbody tr:hover,
+.section-content tbody tr:hover {
+  background-color: #e3f2fd !important;
+  transition: background-color 0.2s ease;
+}
+
+/* Table Title */
+.table-title {
+  margin: 8px 0 12px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #2E86AB;
+  position: relative;
+  z-index: 4;
+}
+
+/* Column width distribution - Responsive */
+.table-container th:nth-child(1),
+.table-container td:nth-child(1) {
+  width: 20%;
+  min-width: 120px;
+}
+
+.table-container th:nth-child(2),
+.table-container td:nth-child(2) {
+  width: 35%;
+  min-width: 200px;
+}
+
+.table-container th:nth-child(3),
+.table-container td:nth-child(3) {
+  width: 25%;
+  min-width: 150px;
+}
+
+.table-container th:last-child,
+.table-container td:last-child {
+  width: 20%;
+  min-width: 120px;
+}
+
+/* Special styling for Budget section tables (Section 8) */
+.section:nth-child(9) .table-container,
+.section[id*="budget"] .table-container {
+  z-index: 10;
+  border: 2px solid #2E86AB;
+  box-shadow: 0 4px 12px rgba(46, 134, 171, 0.15);
+}
+
+.section:nth-child(9) .table-container table,
+.section[id*="budget"] .table-container table {
+  z-index: 11;
+}
+
+.section:nth-child(9) .table-container th,
+.section[id*="budget"] .table-container th {
+  z-index: 12;
+  background: linear-gradient(135deg, #2E86AB 0%, #1a5f7a 100%);
+}
+
+.section:nth-child(9) .table-container td,
+.section[id*="budget"] .table-container td {
+  z-index: 11;
+}
+
+/* Prevent images or code from blowing up layout */
+.section-content img {
+  max-width: 100%;
+  height: auto;
+  position: relative;
+  z-index: 3;
+}
+
+.section-content pre,
+.section-content code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  position: relative;
+  z-index: 3;
+}
+
+/* Table scrolling improvements */
+.table-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background: #2E86AB;
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: #1a5f7a;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .table-container th:nth-child(1),
+  .table-container td:nth-child(1) {
+    width: 25%;
+    min-width: 100px;
+  }
+  
+  .table-container th:nth-child(2),
+  .table-container td:nth-child(2) {
+    width: 40%;
+    min-width: 150px;
+  }
+  
+  .table-container th:nth-child(3),
+  .table-container td:nth-child(3) {
+    width: 20%;
+    min-width: 100px;
+  }
+  
+  .table-container th:last-child,
+  .table-container td:last-child {
+    width: 15%;
+    min-width: 80px;
+  }
+}
+
+/* Fix for tables passing through outline layers */
+.table-container,
+.section-content table {
+  /* Force proper stacking context */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  /* Ensure table stays within bounds */
+  contain: layout style paint;
+  /* Prevent interference with navigation or outline elements */
+  isolation: isolate;
+}
+
+/* Additional containment for problematic sections */
+.section[data-section="8"] .table-container,
+.section:nth-child(8) .table-container,
+.section:nth-child(9) .table-container {
+  /* Higher specificity for section 8 (Budget) */
+  z-index: 15 !important;
+  transform: translateZ(1px);
+  isolation: isolate;
+  /* Prevent bleeding through */
+  clip-path: inset(0);
+}
+
+/* Ensure table cells don't escape container bounds */
+.table-container th,
+.table-container td {
+  /* Prevent content overflow */
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Override any conflicting z-index from other elements */
+.table-container table tbody tr,
+.table-container table thead tr {
+  z-index: inherit;
+  position: relative;
+}
+
+/* Specific fixes for outline/navigation interference */
+.toc-page,
+.cover-page,
+.proposal-footer {
+  z-index: 1;
+}
+
+.section {
+  z-index: 2;
+}
+
+.section-content {
+  z-index: 3;
+}
+
+/* Print adjustments */
+@media print {
+  .table-container {
+    overflow-x: visible;
+    box-shadow: none;
+    border: 1px solid #ddd;
+    transform: none;
+    contain: none;
+  }
+  
+  .table-container table,
+  .section-content table {
+    page-break-inside: avoid;
+  }
+  
+  .table-container th,
+  .table-container td {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    max-width: none;
+    overflow: visible;
+  }
+}
+

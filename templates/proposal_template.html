@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Professional Proposal</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <div class="proposal-container">
+        <!-- Cover Page -->
+        <div class="cover-page">
+            <div class="cover-header">
+                <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjYwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjx0ZXh0IHg9IjEwIiB5PSI0MCIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjM2IiBmb250LXdlaWdodD0iYm9sZCIgZmlsbD0iIzJFODZBQiI+QXptWDwvdGV4dD48L3N2Zz4=" alt="AzmX Logo" class="logo">
+                <div class="proposal-type">TECHNICAL PROPOSAL</div>
+            </div>
+            
+            <div class="cover-content">
+                <h1 class="proposal-title">{{ project_name }}</h1>
+                <div class="client-info">
+                    <div class="label">Prepared for:</div>
+                    <div class="client-name">{{ client_name }}</div>
+                </div>
+                
+                <div class="rfp-reference">
+                    {% if rfp_reference %}
+                    <div class="label">RFP Reference:</div>
+                    <div class="reference">{{ rfp_reference }}</div>
+                    {% endif %}
+                </div>
+                
+                <div class="proposal-meta">
+                    <div class="meta-item">
+                        <span class="label">Date:</span>
+                        <span>{{ submission_date }}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="label">Proposal ID:</span>
+                        <span>{{ proposal_id }}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="label">Valid Until:</span>
+                        <span>{{ valid_until }}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="cover-footer">
+                <div class="confidential">CONFIDENTIAL & PROPRIETARY</div>
+                <div class="company-tagline">Excellence in Digital Transformation</div>
+            </div>
+        </div>
+        
+        <!-- Table of Contents -->
+        <div class="toc-page">
+            <h2 class="toc-title">Table of Contents</h2>
+            <div class="toc-content">
+                {% for section in sections %}
+                <div class="toc-item">
+                    <span class="toc-number">{{ loop.index }}</span>
+                    <span class="toc-text">{{ section.title }}</span>
+                    <span class="toc-dots"></span>
+                    <span class="toc-page-num">{{ section.page }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <!-- Executive Summary -->
+        {% if executive_summary %}
+        <div class="section executive-summary">
+            <h2 class="section-title">Executive Summary</h2>
+            <div class="summary-highlights">
+                <div class="highlight-box">
+                    <div class="highlight-label">Project Duration</div>
+                    <div class="highlight-value">{{ project_duration }}</div>
+                </div>
+                <div class="highlight-box">
+                    <div class="highlight-label">Total Investment</div>
+                    <div class="highlight-value">{{ total_budget }}</div>
+                </div>
+                <div class="highlight-box">
+                    <div class="highlight-label">Team Size</div>
+                    <div class="highlight-value">{{ team_size }}</div>
+                </div>
+                <div class="highlight-box">
+                    <div class="highlight-label">Key Deliverables</div>
+                    <div class="highlight-value">{{ key_deliverables_count }}</div>
+                </div>
+            </div>
+            <div class="summary-content">
+                {{ executive_summary | safe }}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Main Content Sections -->
+        {% for section_name, section_content in sections.items() %}
+        <div class="section" id="{{ section_name | slugify }}">
+            <h2 class="section-title">{{ loop.index }}. {{ section_name }}</h2>
+            
+            <div class="section-content">
+                {{ section_content.content | safe }}
+            </div>
+            
+            {% if section_name in charts %}
+            <div class="chart-container">
+                <h3 class="chart-title">{{ section_name }} Visualization</h3>
+                <div class="chart-wrapper">
+                    {{ charts[section_name] | safe }}
+                </div>
+            </div>
+            {% endif %}
+            
+            {% if section_content.tables %}
+            {% for table in section_content.tables %}
+            <div class="table-container">
+                <h3 class="table-title">{{ table.title }}</h3>
+                {{ table.html | safe }}
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+        {% endfor %}
+        
+        <!-- Appendices -->
+        {% if appendices %}
+        <div class="section appendices">
+            <h2 class="section-title">Appendices</h2>
+            {% for appendix in appendices %}
+            <div class="appendix">
+                <h3>Appendix {{ loop.index }}: {{ appendix.title }}</h3>
+                <div class="appendix-content">
+                    {{ appendix.content | safe }}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        <!-- Footer -->
+        <div class="proposal-footer">
+            <div class="footer-content">
+                <div class="company-info">
+                    <div class="company-name">{{ company_name }}</div>
+                    <div class="company-address">{{ company_address }}</div>
+                    <div class="company-contact">
+                        <span>Email: {{ company_email }}</span>
+                        <span>|</span>
+                        <span>Web: {{ company_website }}</span>
+                    </div>
+                </div>
+                <div class="copyright">
+                    © {{ current_year }} {{ company_name }}. All rights reserved.
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Page numbering for print
+        window.onload = function() {
+            if (window.matchMedia('print').matches) {
+                var pages = document.querySelectorAll('.section');
+                pages.forEach(function(page, index) {
+                    page.setAttribute('data-page', index + 1);
+                });
+            }
+        };
+    </script>
+</body>
+</html>

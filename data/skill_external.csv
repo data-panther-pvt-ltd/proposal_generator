@@ -1,0 +1,36 @@
+vendor_id,vendor_name,skill_category,skill_name,experience_level,hourly_rate_usd,availability,location,specialty
+V001,TechPro Solutions,Backend Development,Python/Django,Senior,145,Available,Remote,Enterprise Solutions
+V002,CloudExperts Inc,DevOps,AWS Architecture,Senior,165,Available,Remote,Cloud Migration
+V003,DataMinds LLC,Data Science,ML Engineering,Senior,180,Available,Remote,AI/ML Solutions
+V004,WebCraft Studio,Frontend Development,React/Next.js,Mid-level,95,Available,Remote,SPA Development
+V005,SecureNet Pro,Security,Penetration Testing,Senior,175,On-demand,Remote,Security Audits
+V006,AgileMasters,Project Management,Scrum Master,Senior,135,Available,Remote,Agile Transformation
+V007,MobileFirst Dev,Mobile Development,Flutter/React Native,Mid-level,105,Available,Remote,Cross-platform Apps
+V008,DBExperts,Database,Database Architecture,Senior,155,On-demand,Remote,Performance Tuning
+V009,QualityPro,Quality Assurance,Test Automation,Mid-level,85,Available,Remote,E2E Testing
+V010,InfraTech,DevOps,Kubernetes Expert,Senior,160,Available,Remote,Container Orchestration
+V011,CodeCrafters,Full Stack Development,MEAN/MERN,Senior,150,Available,Remote,Full Stack Solutions
+V012,AnalyticsPro,Data Science,Data Analytics,Mid-level,110,Available,Remote,Business Intelligence
+V013,CloudNative Co,DevOps,CI/CD Pipeline,Mid-level,95,Available,Remote,DevOps Automation
+V014,UXMasters,UI/UX Design,Product Design,Senior,125,On-demand,Remote,User Experience
+V015,BlockchainPro,Blockchain,Smart Contracts,Senior,185,On-demand,Remote,DeFi Solutions
+V016,APIExperts,Backend Development,Microservices,Senior,155,Available,Remote,API Architecture
+V017,TestLab Inc,Quality Assurance,Performance Testing,Mid-level,90,Available,Remote,Load Testing
+V018,DataPipeline Co,Data Engineering,ETL/ELT,Senior,165,Available,Remote,Data Pipelines
+V019,FrontendPro,Frontend Development,Vue.js/Nuxt,Mid-level,92,Available,Remote,Progressive Web Apps
+V020,CloudSecurity Inc,Security,Cloud Security,Senior,170,On-demand,Remote,Cloud Protection
+V021,ScalePro,Backend Development,Go/Golang,Senior,160,Available,Remote,High Performance
+V022,MobileSec,Security,Mobile Security,Mid-level,115,On-demand,Remote,App Security
+V023,DataViz Pro,Data Science,Visualization,Mid-level,95,Available,Remote,Dashboards
+V024,IntegrationHub,Backend Development,Integration Specialist,Senior,145,Available,Remote,System Integration
+V025,AILabs,Data Science,Deep Learning,Senior,195,On-demand,Remote,Neural Networks
+V026,ReactExperts,Frontend Development,React Native Web,Mid-level,98,Available,Remote,Hybrid Apps
+V027,TestAutomation Co,Quality Assurance,Selenium Expert,Mid-level,88,Available,Remote,Web Automation
+V028,InfraCode,DevOps,Infrastructure as Code,Senior,155,Available,Remote,Terraform/Ansible
+V029,GraphQLPro,Backend Development,GraphQL Expert,Mid-level,110,Available,Remote,API Development
+V030,ComplianceTech,Security,Compliance Specialist,Senior,165,On-demand,Remote,ISO/SOC2
+V031,EdgeComputing Co,Backend Development,Edge Computing,Senior,170,On-demand,Remote,IoT Solutions
+V032,StreamPro,Backend Development,Real-time Systems,Senior,165,Available,Remote,WebSocket/Streaming
+V033,SearchExperts,Backend Development,Elasticsearch,Mid-level,105,Available,Remote,Search Solutions
+V034,CachePro,Backend Development,Redis/Caching,Mid-level,100,Available,Remote,Performance
+V035,MessageQueue Co,Backend Development,Message Queues,Senior,150,Available,Remote,RabbitMQ/Kafka
