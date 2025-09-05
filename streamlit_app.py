@@ -2,9 +2,10 @@ import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+import time
 
 import streamlit as st
 import pandas as pd
@@ -36,11 +37,41 @@ def run_async(coro):
     return loop.run_until_complete(coro)
 
 
+def clear_api_key():
+    """Helper function to clear API key from all locations"""
+    if "OPENAI_API_KEY" in st.session_state:
+        del st.session_state["OPENAI_API_KEY"]
+    if "OPENAI_API_KEY" in os.environ:
+        del os.environ["OPENAI_API_KEY"]
+    if "api_key_timestamp" in st.session_state:
+        del st.session_state["api_key_timestamp"]
+
+
+def check_api_key_timeout(timeout_minutes=30):
+    """Clear API key if it's been too long since last activity"""
+    if "api_key_timestamp" in st.session_state:
+        last_activity = st.session_state["api_key_timestamp"]
+        if datetime.now() - last_activity > timedelta(minutes=timeout_minutes):
+            clear_api_key()
+            return True
+    return False
+
+
 def main():
     st.set_page_config(page_title="AI Proposal Generator", layout="wide")
     st.title("AI Proposal Generator")
     st.caption("Upload RFP and your company info to generate a professional proposal.")
 
+    # Clear API key on page refresh/reload using a unique session ID
+    if "session_id" not in st.session_state:
+        # New session - generate a unique ID and clear any existing API key
+        st.session_state["session_id"] = time.time()
+        clear_api_key()
+    
+    # Check for API key timeout (30 minutes of inactivity)
+    if check_api_key_timeout(30):
+        st.info("API key cleared due to inactivity for security.")
+    
     config = load_config()
     setup_logging(config)
     logger = get_logger(__name__)
@@ -51,16 +82,39 @@ def main():
 
     with st.sidebar:
         st.header("Inputs")
-        # OpenAI API Key (stored in session)
-        if "OPENAI_API_KEY" not in st.session_state:
-            st.session_state["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "")
+        
+        # Clear API Key button
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔒 Clear API Key", help="Remove API key from session", use_container_width=True):
+                clear_api_key()
+                st.success("API key cleared")
+                st.rerun()
+        
+        with col2:
+            if "OPENAI_API_KEY" in st.session_state:
+                time_left = 30
+                if "api_key_timestamp" in st.session_state:
+                    elapsed = (datetime.now() - st.session_state["api_key_timestamp"]).total_seconds() / 60
+                    time_left = max(0, 30 - int(elapsed))
+                st.caption(f"⏱️ Auto-clear in {time_left}m")
+        
+        # OpenAI API Key (NOT stored in session by default)
+        # Don't auto-populate from environment
         api_key = st.text_input(
             "OpenAI API Key",
-            value=st.session_state["OPENAI_API_KEY"],
+            value="",  # Always start empty
             placeholder="sk-...",
             type="password",
-            help="Your OpenAI API key will be kept only in this session.")
-        st.session_state["OPENAI_API_KEY"] = api_key
+            key="api_key_input",
+            help="Your API key is temporarily stored and auto-clears after 30 minutes of inactivity.")
+        
+        # Only store if user has entered something new
+        if api_key and api_key != st.session_state.get("OPENAI_API_KEY", ""):
+            st.session_state["OPENAI_API_KEY"] = api_key
+            st.session_state["api_key_timestamp"] = datetime.now()
+            st.success("API key stored for this session")
+            st.rerun()  # Rerun to clear the input field
 
         check_api = st.button("Check API Key", use_container_width=True)
         if check_api:
@@ -68,11 +122,13 @@ def main():
                 st.error("API key is empty. Please paste your OpenAI API key.")
             else:
                 try:
-                    os.environ["OPENAI_API_KEY"] = st.session_state["OPENAI_API_KEY"]
-                    client = OpenAI(api_key=st.session_state["OPENAI_API_KEY"])
+                    # Temporarily set for checking
+                    temp_key = st.session_state["OPENAI_API_KEY"]
+                    client = OpenAI(api_key=temp_key)
                     # Lightweight connectivity check: list models
                     _ = client.models.list()
                     st.success("API key looks valid and OpenAI is reachable.")
+                    # Only set in environment when actually needed (during generation)
                 except Exception as e:
                     st.error(f"API key or connectivity check failed: {e}")
 
@@ -101,7 +157,11 @@ def main():
         artifacts_area = st.container()
 
     if start_btn:
-        # Apply API key to environment for this run
+        # Update activity timestamp
+        if "OPENAI_API_KEY" in st.session_state:
+            st.session_state["api_key_timestamp"] = datetime.now()
+        
+        # Apply API key to environment for this run only
         if st.session_state.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = st.session_state["OPENAI_API_KEY"]
         else:
@@ -171,6 +231,10 @@ def main():
         except Exception as e:
             st.error(f"Generation failed: {e}")
             return
+        finally:
+            # Clear API key from environment after use
+            if "OPENAI_API_KEY" in os.environ:
+                del os.environ["OPENAI_API_KEY"]
 
         # Display HTML preview
         html = proposal.get('html')
@@ -198,6 +262,15 @@ def main():
 
 
 if __name__ == "__main__":
+    # Add session cleanup on app restart
+    import atexit
+    
+    def cleanup_session():
+        """Clear sensitive data on app exit"""
+        if "OPENAI_API_KEY" in os.environ:
+            del os.environ["OPENAI_API_KEY"]
+    
+    atexit.register(cleanup_session)
     main()
 
 
