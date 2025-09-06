@@ -6,13 +6,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 import time
-
 import streamlit as st
-import pandas as pd
-
-from core.sdk_runner import ProposalRequest
 from main import ProposalGenerator, load_config
 from utils.logging_config import setup_logging, get_logger
+from utils.auth import authenticate_user, show_user_info
 from openai import OpenAI
 
 
@@ -61,6 +58,13 @@ def main():
     st.set_page_config(page_title="AI Proposal Generator", layout="wide")
     st.title("AI Proposal Generator")
     st.caption("Upload RFP and your company info to generate a professional proposal.")
+    
+    # Authenticate user
+    auth_status, authenticator = authenticate_user()
+    
+    # If not authenticated, stop here
+    if not auth_status:
+        st.stop()
 
     # Clear API key on page refresh/reload using a unique session ID
     if "session_id" not in st.session_state:
@@ -81,6 +85,10 @@ def main():
     uploads_dir.mkdir(exist_ok=True)
 
     with st.sidebar:
+        # Show user info and logout button if authenticated
+        if auth_status and authenticator:
+            show_user_info(authenticator, "sidebar")
+        
         st.header("Inputs")
         
         # Clear API Key button
