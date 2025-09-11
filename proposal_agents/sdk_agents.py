@@ -12,11 +12,21 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 
 # Load agent instructions from markdown files
+# def load_instructions(filename: str) -> str:
+#     """Load agent instructions from markdown file"""
+#     try:
+#         path = Path(__file__).parent / filename
+#         with open(path, 'r') as f:
+#             return f.read()
+#     except FileNotFoundError:
+#         return f"Instructions for {filename} not found. Using default instructions for {filename.replace('.md', '')} agent."
+from pathlib import Path
+
 def load_instructions(filename: str) -> str:
     """Load agent instructions from markdown file"""
     try:
         path = Path(__file__).parent / filename
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             return f.read()
     except FileNotFoundError:
         return f"Instructions for {filename} not found. Using default instructions for {filename.replace('.md', '')} agent."

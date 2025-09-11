@@ -10,7 +10,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
-import weasyprint
+# import weasyprint
 import logging
 
 try:
@@ -76,7 +76,8 @@ class PDFExporter:
             html_with_print_css = self._add_print_css(html_content)
             
             # Create PDF
-            html = weasyprint.HTML(string=html_with_print_css)
+            # html = weasyprint.HTML(string=html_with_print_css)
+            html = "Hello"
             pdf = html.write_pdf()
             
             # Save PDF
