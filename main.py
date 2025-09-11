@@ -17,6 +17,7 @@ from typing import Dict, List, Any, Optional
 # Add this import at the top
 from core.rfp_extractor import RFPExtractor
 from dataclasses import dataclass
+from dataclasses import dataclass
 import pandas as pd
 import logging
 

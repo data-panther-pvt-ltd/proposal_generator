@@ -1,13 +1,29 @@
 import asyncio
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 from pathlib import Path
 import json
 import os
-from main import load_config, setup_logging, get_logger, get_all_agents, coordinator, process_rfp_pdf, SimpleCostTracker, ProposalGenerator
-
+from main import load_config, setup_logging, get_logger, get_all_agents, coordinator, create_request_from_rfp, SimpleCostTracker, ProposalGenerator
 app = FastAPI(title="Proposal Generator API", version="2.0")
+
+# Enable CORS for local development and typical frontend ports
+origins = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ProposalRequestInput(BaseModel):
     pdf_path: str
@@ -34,16 +50,26 @@ def run_proposal_task(input_data: ProposalRequestInput, config: dict):
             # RFP config
             rfp_config = config.get("rfp", {})
 
-            # Process RFP PDF (async)
-            request = await process_rfp_pdf(
+            # Process RFP PDF (async) using create_request_from_rfp
+            request = await create_request_from_rfp(
                 input_data.pdf_path,
-                input_data.client_name,
-                input_data.project_name,
-                input_data.project_type,
                 rfp_config,
                 config,
                 logger
             )
+
+            # Override extracted values with user-provided inputs when present
+            try:
+                if input_data.client_name:
+                    request.client_name = input_data.client_name
+                if input_data.project_name:
+                    request.project_name = input_data.project_name
+                if input_data.project_type:
+                    request.project_type = input_data.project_type
+                if hasattr(request, 'requirements'):
+                    request.requirements['source_pdf'] = input_data.pdf_path
+            except Exception:
+                pass
 
             # Proposal generator (async)
             cost_tracker = SimpleCostTracker()
@@ -105,4 +131,30 @@ async def generate_proposal(input_data: ProposalRequestInput, background_tasks: 
         "message": "Proposal generation started in background",
         "client_name": input_data.client_name,
         "project_name": input_data.project_name
+    }
+
+
+@app.post("/upload_pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    """Accept a PDF upload and save it to the uploads directory, returning the saved path."""
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    uploads_dir = Path("/home/datapanther/Azeem_Products/proposal_generator/uploads")
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_filename = file.filename or "uploaded.pdf"
+    destination = uploads_dir / safe_filename
+
+    try:
+        contents = await file.read()
+        with open(destination, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+
+    return {
+        "status": "uploaded",
+        "path": str(destination),
+        "filename": safe_filename
     }
