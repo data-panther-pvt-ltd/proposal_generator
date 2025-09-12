@@ -1,6 +1,7 @@
 import asyncio
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from datetime import datetime
 from pathlib import Path
@@ -158,3 +159,59 @@ async def upload_pdf(file: UploadFile = File(...)):
         "path": str(destination),
         "filename": safe_filename
     }
+
+
+@app.get("/download_proposal/{filename}")
+async def download_proposal(filename: str):
+    """Download a generated proposal file (PDF, HTML, or JSON)"""
+    # Security: only allow alphanumeric, dots, underscores, and hyphens
+    import re
+    if not re.match(r'^[a-zA-Z0-9._-]+$', filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # Look for the file in the output directory
+    output_dir = Path("/home/datapanther/Azeem_Products/proposal_generator/generated_proposals")
+    file_path = output_dir / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Determine media type based on extension
+    if filename.endswith('.pdf'):
+        media_type = 'application/pdf'
+    elif filename.endswith('.html'):
+        media_type = 'text/html'
+    elif filename.endswith('.json'):
+        media_type = 'application/json'
+    elif filename.endswith('.docx'):
+        media_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    else:
+        media_type = 'application/octet-stream'
+
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type=media_type
+    )
+
+
+@app.get("/list_proposals")
+async def list_proposals():
+    """List available generated proposal files"""
+    output_dir = Path("/home/datapanther/Azeem_Products/proposal_generator/generated_proposals")
+    output_dir.mkdir(exist_ok=True)
+
+    files = []
+    for file_path in output_dir.glob("*"):
+        if file_path.is_file():
+            files.append({
+                "filename": file_path.name,
+                "size": file_path.stat().st_size,
+                "modified": file_path.stat().st_mtime,
+                "type": file_path.suffix
+            })
+
+    # Sort by modification time, newest first
+    files.sort(key=lambda x: x["modified"], reverse=True)
+
+    return {"files": files}
