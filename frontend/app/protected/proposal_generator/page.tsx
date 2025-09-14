@@ -295,7 +295,7 @@ async function pollForGenerationStatus(
 
   while (true) {
     try {
-      const res = await fetch(`http://localhost:8000/generation_status/${taskId}`);
+      const res = await fetch(`http://34.28.203.178:8003/generation_status/${taskId}`);
       const status: GenerationStatus = await res.json();
 
       if (res.ok) {
@@ -330,7 +330,7 @@ async function pollForGenerationStatus(
 async function handleDownload(filename: string, extension: "pdf" | "docx") {
   try {
     // Optional: fetch list from backend and get latest filename
-    const res = await fetch("http://localhost:8000/list_proposals");
+    const res = await fetch("http://34.28.203.178:8003/list_proposals");
     const data = await res.json();
 
     if (!res.ok || !data.files || !Array.isArray(data.files)) {
@@ -349,7 +349,7 @@ async function handleDownload(filename: string, extension: "pdf" | "docx") {
     const latestFile = filtered[0].filename;
 
     // Trigger download
-    const downloadUrl = `http://localhost:8000/download_proposal/${latestFile}`;
+    const downloadUrl = `http://34.28.203.178:8003/download_proposal/${latestFile}`;
     const a = document.createElement("a");
     a.href = downloadUrl;
     a.download = latestFile;
