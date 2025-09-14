@@ -1,448 +1,4 @@
 
-// "use client";
-
-// import { useEffect, useMemo, useState } from "react";
-
-// type GenerateResponse = {
-//   status?: string;
-//   message?: string;
-//   error?: string;
-//   client_name?: string;
-//   project_name?: string;
-// };
-
-// export default function Home() {
-//   const [rfpFile, setRfpFile] = useState<File | null>(null);
-//   const [profileFile, setProfileFile] = useState<File | null>(null);
-//   const [skillsInternalFile, setSkillsInternalFile] = useState<File | null>(null);
-//   const [skillsExternalFile, setSkillsExternalFile] = useState<File | null>(null);
-//   const [clientName, setClientName] = useState("");
-//   const [projectName, setProjectName] = useState("");
-//   const [projectType, setProjectType] = useState("general");
-//   const [timeline, setTimeline] = useState("As per RFP requirements");
-//   const [budgetRange, setBudgetRange] = useState("As per RFP specifications");
-//   const [apiKey, setApiKey] = useState("");
-//   const [apiKeyStoredAt, setApiKeyStoredAt] = useState<number | null>(null);
-//   const [isSubmitting, setIsSubmitting] = useState(false);
-//   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-//   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-//   const [checkingKey, setCheckingKey] = useState(false);
-//   const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
-
-//   const minutesLeft = useMemo(() => {
-//     if (!apiKeyStoredAt) return null;
-//     const elapsedMs = Date.now() - apiKeyStoredAt;
-//     const totalMs = 30 * 60 * 1000;
-//     const remaining = Math.max(0, totalMs - elapsedMs);
-//     return Math.ceil(remaining / 60000);
-//   }, [apiKeyStoredAt]);
-
-//   useEffect(() => {
-//     if (!apiKeyStoredAt) return;
-//     const interval = setInterval(() => {
-//       if (Date.now() - apiKeyStoredAt > 30 * 60 * 1000) {
-//         clearApiKey();
-//       }
-//     }, 10000);
-//     return () => clearInterval(interval);
-//   }, [apiKeyStoredAt]);
-
-//   function storeApiKeyLocally(value: string) {
-//     setApiKey(value);
-//     if (value) {
-//       setApiKeyStoredAt(Date.now());
-//       setApiKeyValid(null);
-//     }
-//   }
-
-//   function clearApiKey() {
-//     setApiKey("");
-//     setApiKeyStoredAt(null);
-//     setApiKeyValid(null);
-//   }
-
-//   async function handleCheckApiKey() {
-//     setCheckingKey(true);
-//     setErrorMessage(null);
-//     try {
-//       const res = await fetch("/api/check-openai", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//         body: JSON.stringify({ apiKey }),
-//       });
-//       const data = await res.json();
-//       if (!res.ok || !data?.ok) {
-//         setApiKeyValid(false);
-//         throw new Error(data?.error || "API key check failed");
-//       }
-//       setApiKeyValid(true);
-//       setStatusMessage("API key verified successfully");
-//       if (!apiKeyStoredAt) setApiKeyStoredAt(Date.now());
-//     } catch (e: any) {
-//       setErrorMessage(e?.message || "Failed to verify API key");
-//     } finally {
-//       setCheckingKey(false);
-//     }
-//   }
-
-//   async function handleSubmit() {
-//     setErrorMessage(null);
-//     setStatusMessage(null);
-
-//     if (!rfpFile) {
-//       setErrorMessage("Please select an RFP PDF file to continue.");
-//       return;
-//     }
-
-//     try {
-//       setIsSubmitting(true);
-//       setStatusMessage("Processing RFP document...");
-
-//       const form = new FormData();
-//       form.append("file", rfpFile);
-
-//       const uploadRes = await fetch("/api/upload", { method: "POST", body: form });
-//       const uploadData = await uploadRes.json();
-//       if (!uploadRes.ok) {
-//         throw new Error(uploadData?.error || "Upload failed");
-//       }
-
-//       const savedPath: string = uploadData.savedPath;
-
-//       let profilePath: string | null = null;
-//       let skillsInternalPath: string | null = null;
-//       let skillsExternalPath: string | null = null;
-
-//       if (profileFile) {
-//         const f = new FormData();
-//         f.append("file", profileFile);
-//         const r = await fetch("/api/upload", { method: "POST", body: f });
-//         const d = await r.json();
-//         if (!r.ok) throw new Error(d?.error || "Profile upload failed");
-//         profilePath = d.savedPath;
-//       }
-//       if (skillsInternalFile) {
-//         const f = new FormData();
-//         f.append("file", skillsInternalFile);
-//         const r = await fetch("/api/upload", { method: "POST", body: f });
-//         const d = await r.json();
-//         if (!r.ok) throw new Error(d?.error || "Internal skills upload failed");
-//         skillsInternalPath = d.savedPath;
-//       }
-//       if (skillsExternalFile) {
-//         const f = new FormData();
-//         f.append("file", skillsExternalFile);
-//         const r = await fetch("/api/upload", { method: "POST", body: f });
-//         const d = await r.json();
-//         if (!r.ok) throw new Error(d?.error || "External skills upload failed");
-//         skillsExternalPath = d.savedPath;
-//       }
-
-//       setStatusMessage("Generating proposal...");
-
-//       const genRes = await fetch("/api/generate", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//         body: JSON.stringify({
-//           pdf_path: savedPath,
-//           client_name: clientName,
-//           project_name: projectName,
-//           project_type: projectType,
-//           timeline,
-//           budget_range: budgetRange,
-//           profile_path: profilePath,
-//           skills_internal_path: skillsInternalPath,
-//           skills_external_path: skillsExternalPath,
-//         }),
-//       });
-//       const genData: GenerateResponse = await genRes.json();
-//       if (!genRes.ok) {
-//         throw new Error(genData?.error || "Generation request failed");
-//       }
-
-//       setStatusMessage("Proposal generation completed successfully. Please check your output folder for the generated documents.");
-//     } catch (err: any) {
-//       setErrorMessage(err?.message || "An unexpected error occurred. Please try again.");
-//     } finally {
-//       setIsSubmitting(false);
-//     }
-//   }
-
-//   return (
-//     <div className="min-h-screen bg-slate-50 py-8 px-4">
-//       <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
-//         {/* Header */}
-//         <div className="bg-gray-800 text-white px-8 py-8">
-//           <h1 className="text-3xl font-bold mb-2 tracking-tight">
-//             AI Proposal Generator
-//           </h1>
-//           <p className="text-gray-300 text-lg leading-relaxed">
-//             Generate professional proposals from RFP documents using AI-powered analysis
-//           </p>
-//         </div>
-
-//         {/* Form Content */}
-//         <div className="p-8">
-//           {/* Required Documents Section */}
-//           <div className="mb-8">
-//             <h2 className="text-xl font-semibold text-gray-800 mb-5 pb-2 border-b-2 border-gray-200">
-//               Required Documents
-//             </h2>
-            
-//             <div className="mb-6">
-//               <label htmlFor="rfp" className="block text-sm font-medium text-gray-700 mb-2">
-//                 RFP Document (PDF) *
-//               </label>
-//               <input
-//                 id="rfp"
-//                 type="file"
-//                 accept="application/pdf"
-//                 onChange={(e) => setRfpFile(e.target.files?.[0] || null)}
-//                 className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
-//                 required
-//               />
-//               <p className="text-sm text-gray-500 mt-2">
-//                 Upload the Request for Proposal document in PDF format
-//               </p>
-//             </div>
-//           </div>
-
-//           {/* Optional Documents Section */}
-//           <div className="mb-8">
-//             <h2 className="text-xl font-semibold text-gray-800 mb-5 pb-2 border-b-2 border-gray-200">
-//               Supporting Documents 
-//             </h2>
-            
-//             <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-1">
-//               <div>
-//                 <label htmlFor="profile" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Company Profile (Markdown)
-//                 </label>
-//                 <input
-//                   id="profile"
-//                   type="file"
-//                   accept=".md,.markdown,text/markdown"
-//                   onChange={(e) => setProfileFile(e.target.files?.[0] || null)}
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
-//                 />
-//                 <p className="text-sm text-gray-500 mt-2">
-//                   Company overview, capabilities, and background information
-//                 </p>
-//               </div>
-
-//               <div>
-//                 <label htmlFor="skills_internal" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Internal Skills Database (CSV)
-//                 </label>
-//                 <input
-//                   id="skills_internal"
-//                   type="file"
-//                   accept=".csv,text/csv"
-//                   onChange={(e) => setSkillsInternalFile(e.target.files?.[0] || null)}
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
-//                 />
-//                 <p className="text-sm text-gray-500 mt-2">
-//                   Internal team skills and competencies
-//                 </p>
-//               </div>
-
-//               <div>
-//                 <label htmlFor="skills_external" className="block text-sm font-medium text-gray-700 mb-2">
-//                   External Skills Database (CSV)
-//                 </label>
-//                 <input
-//                   id="skills_external"
-//                   type="file"
-//                   accept=".csv,text/csv"
-//                   onChange={(e) => setSkillsExternalFile(e.target.files?.[0] || null)}
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
-//                 />
-//                 <p className="text-sm text-gray-500 mt-2">
-//                   Partner or contractor skills and capabilities
-//                 </p>
-//               </div>
-//             </div>
-//           </div>
-
-//           {/* Project Information Section */}
-//           <div className="mb-8">
-//             <h2 className="text-xl font-semibold text-gray-800 mb-5 pb-2 border-b-2 border-gray-200">
-//               Project Information
-//             </h2>
-            
-//             <div className="grid gap-6 md:grid-cols-2">
-//               <div>
-//                 <label htmlFor="client" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Client Name
-//                 </label>
-//                 <input
-//                   id="client"
-//                   type="text"
-//                   value={clientName}
-//                   onChange={(e) => setClientName(e.target.value)}
-//                   placeholder="Enter client organization name"
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-//                 />
-//               </div>
-
-//               <div>
-//                 <label htmlFor="project" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Project Name
-//                 </label>
-//                 <input
-//                   id="project"
-//                   type="text"
-//                   value={projectName}
-//                   onChange={(e) => setProjectName(e.target.value)}
-//                   placeholder="Enter project title"
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-//                 />
-//               </div>
-
-//               <div>
-//                 <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Project Category
-//                 </label>
-//                 <select
-//                   id="type"
-//                   value={projectType}
-//                   onChange={(e) => setProjectType(e.target.value)}
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200 bg-white"
-//                 >
-//                   <option value="general">General</option>
-//                   <option value="it">Information Technology</option>
-//                   <option value="healthcare">Healthcare</option>
-//                   <option value="finance">Financial Services</option>
-//                   <option value="government">Government</option>
-//                   <option value="other">Other</option>
-//                 </select>
-//               </div>
-
-//               <div>
-//                 <label htmlFor="timeline" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Project Timeline
-//                 </label>
-//                 <input
-//                   id="timeline"
-//                   type="text"
-//                   value={timeline}
-//                   onChange={(e) => setTimeline(e.target.value)}
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-//                 />
-//               </div>
-
-//               <div className="md:col-span-2">
-//                 <label htmlFor="budget" className="block text-sm font-medium text-gray-700 mb-2">
-//                   Budget Range
-//                 </label>
-//                 <input
-//                   id="budget"
-//                   type="text"
-//                   value={budgetRange}
-//                   onChange={(e) => setBudgetRange(e.target.value)}
-//                   className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-//                 />
-//               </div>
-//             </div>
-//           </div>
-
-//           {/* API Configuration Section */}
-//           <div className="mb-8">
-//             <h2 className="text-xl font-semibold text-gray-800 mb-5 pb-2 border-b-2 border-gray-200">
-//               AI Configuration
-//             </h2>
-            
-//             <div>
-//               <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-2">
-//                 OpenAI API Key *
-//               </label>
-//               <div className="flex gap-3">
-//                 <input
-//                   id="apiKey"
-//                   type="password"
-//                   value={apiKey}
-//                   onChange={(e) => storeApiKeyLocally(e.target.value)}
-//                   placeholder="sk-..."
-//                   className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-//                   required
-//                 />
-//                 <button
-//                   type="button"
-//                   onClick={clearApiKey}
-//                   className="px-6 py-3 border-2 border-gray-300 rounded-lg bg-gray-50 text-gray-700 font-medium hover:bg-gray-100 hover:border-gray-400 transition-colors duration-200"
-//                 >
-//                   Clear
-//                 </button>
-//                 <button
-//                   type="button"
-//                   disabled={!apiKey || checkingKey}
-//                   onClick={handleCheckApiKey}
-//                   className="px-6 py-3 bg-gray-800 text-white rounded-lg font-medium hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
-//                 >
-//                   {checkingKey ? "Verifying..." : "Verify Key"}
-//                 </button>
-//               </div>
-              
-//               {apiKeyStoredAt && (
-//                 <div className="flex items-center gap-3 mt-3 text-sm text-gray-600">
-//                   <span>Auto-clear in {minutesLeft ?? 0} minutes</span>
-//                   {apiKeyValid === true && (
-//                     <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
-//                       Verified
-//                     </span>
-//                   )}
-//                   {apiKeyValid === false && (
-//                     <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">
-//                       Invalid
-//                     </span>
-//                   )}
-//                 </div>
-//               )}
-              
-//               <p className="text-sm text-gray-500 mt-2">
-//                 Your API key is stored temporarily and will be cleared automatically for security
-//               </p>
-//             </div>
-//           </div>
-
-//           {/* Submit Button */}
-//           <div className="pt-6 border-t-2 border-gray-200 flex justify-center">
-//             <button
-//               type="button"
-//               disabled={isSubmitting || !rfpFile}
-//               onClick={handleSubmit}
-//               className="px-8 py-4 bg-gray-800 text-white rounded-lg font-semibold text-lg hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg min-w-[200px]"
-//             >
-//               {isSubmitting ? "Processing..." : "Generate Proposal"}
-//             </button>
-//           </div>
-
-//           {/* Status Messages */}
-//           {(statusMessage || errorMessage) && (
-//             <div className="mt-8 space-y-3">
-//               {statusMessage && (
-//                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 font-medium">
-//                   {statusMessage}
-//                 </div>
-//               )}
-//               {errorMessage && (
-//                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-800 font-medium">
-//                   {errorMessage}
-//                 </div>
-//               )}
-//             </div>
-//           )}
-//         </div>
-
-//         {/* Footer */}
-//         <div className="bg-slate-50 px-8 py-6 border-t border-gray-200 text-center text-sm text-gray-600">
-//           Ensure your backend service is running with proper OpenAI API configuration. Generated proposals will be saved according to your system settings.
-//         </div>
-//       </div>
-//     </div>
-//   );
-// }
-
 "use client";
 // import router, { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
@@ -455,6 +11,19 @@ type GenerateResponse = {
   error?: string;
   client_name?: string;
   project_name?: string;
+  task_id?: string;
+};
+
+type GenerationStatus = {
+  status: string;
+  message: string;
+  timestamp: string;
+  pdf_generated: boolean;
+  pdf_path?: string;
+  files?: {
+    json: string;
+    html: string;
+  };
 };
 
 export default function Home() {
@@ -537,78 +106,259 @@ export default function Home() {
     }
   }
 
-  async function handleSubmit() {
-    setErrorMessage(null);
-    setStatusMessage(null);
-    if (!rfpFile) {
-      setErrorMessage("Please select an RFP PDF file to continue.");
+//   async function handleSubmit() {
+//     setErrorMessage(null);
+//     setStatusMessage(null);
+//     if (!rfpFile) {
+//       setErrorMessage("Please select an RFP PDF file to continue.");
+//       return;
+//     }
+//     try {
+//       setIsSubmitting(true);
+//       setStatusMessage("Processing RFP document...");
+//       const form = new FormData();
+//       form.append("file", rfpFile);
+//       const uploadRes = await fetch("/api/upload", { method: "POST", body: form });
+//       const uploadData = await uploadRes.json();
+//       if (!uploadRes.ok) {
+//         throw new Error(uploadData?.error || "Upload failed");
+//       }
+//       const savedPath: string = uploadData.savedPath;
+//       let profilePath: string | null = null;
+//       let skillsInternalPath: string | null = null;
+//       let skillsExternalPath: string | null = null;
+//       if (profileFile) {
+//         const f = new FormData();
+//         f.append("file", profileFile);
+//         const r = await fetch("/api/upload", { method: "POST", body: f });
+//         const d = await r.json();
+//         if (!r.ok) throw new Error(d?.error || "Profile upload failed");
+//         profilePath = d.savedPath;
+//       }
+//       if (skillsInternalFile) {
+//         const f = new FormData();
+//         f.append("file", skillsInternalFile);
+//         const r = await fetch("/api/upload", { method: "POST", body: f });
+//         const d = await r.json();
+//         if (!r.ok) throw new Error(d?.error || "Internal skills upload failed");
+//         skillsInternalPath = d.savedPath;
+//       }
+//       if (skillsExternalFile) {
+//         const f = new FormData();
+//         f.append("file", skillsExternalFile);
+//         const r = await fetch("/api/upload", { method: "POST", body: f });
+//         const d = await r.json();
+//         if (!r.ok) throw new Error(d?.error || "External skills upload failed");
+//         skillsExternalPath = d.savedPath;
+//       }
+//       setStatusMessage("Generating proposal...");
+//       const genRes = await fetch("/api/generate", {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body: JSON.stringify({
+//           pdf_path: savedPath,
+//           client_name: clientName,
+//           project_name: projectName,
+//           project_type: projectType,
+//           timeline,
+//           budget_range: budgetRange,
+//           profile_path: profilePath,
+//           skills_internal_path: skillsInternalPath,
+//           skills_external_path: skillsExternalPath,
+//         }),
+//       });
+//       const genData: GenerateResponse = await genRes.json();
+//       if (!genRes.ok) {
+//         throw new Error(genData?.error || "Generation request failed");
+//       }
+//       setStatusMessage("Proposal generation completed successfully. Please check your output folder for the generated documents.");
+//     } catch (err: any) {
+//       setErrorMessage(err?.message || "An unexpected error occurred. Please try again.");
+//     } finally {
+//       setIsSubmitting(false);
+//     }
+//   }
+const [generationCompleted, setGenerationCompleted] = useState(false);
+
+async function handleSubmit() {
+  setErrorMessage(null);
+  setStatusMessage(null);
+  setGenerationCompleted(false);
+
+  if (!rfpFile) {
+    setErrorMessage("Please select an RFP PDF file to continue.");
+    return;
+  }
+
+  try {
+    setIsSubmitting(true);
+    setStatusMessage("Processing RFP document...");
+
+    const form = new FormData();
+    form.append("file", rfpFile);
+    const uploadRes = await fetch("/api/upload", { method: "POST", body: form });
+    const uploadData = await uploadRes.json();
+
+    if (!uploadRes.ok) {
+      throw new Error(uploadData?.error || "Upload failed");
+    }
+
+    const savedPath: string = uploadData.savedPath;
+    let profilePath: string | null = null;
+    let skillsInternalPath: string | null = null;
+    let skillsExternalPath: string | null = null;
+
+    if (profileFile) {
+      const f = new FormData();
+      f.append("file", profileFile);
+      const r = await fetch("/api/upload", { method: "POST", body: f });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || "Profile upload failed");
+      profilePath = d.savedPath;
+    }
+
+    if (skillsInternalFile) {
+      const f = new FormData();
+      f.append("file", skillsInternalFile);
+      const r = await fetch("/api/upload", { method: "POST", body: f });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || "Internal skills upload failed");
+      skillsInternalPath = d.savedPath;
+    }
+
+    if (skillsExternalFile) {
+      const f = new FormData();
+      f.append("file", skillsExternalFile);
+      const r = await fetch("/api/upload", { method: "POST", body: f });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || "External skills upload failed");
+      skillsExternalPath = d.savedPath;
+    }
+
+    setStatusMessage("Generating proposal...");
+
+    const genRes = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pdf_path: savedPath,
+        client_name: clientName,
+        project_name: projectName,
+        project_type: projectType,
+        timeline,
+        budget_range: budgetRange,
+        profile_path: profilePath,
+        skills_internal_path: skillsInternalPath,
+        skills_external_path: skillsExternalPath,
+      }),
+    });
+
+    const genData: GenerateResponse = await genRes.json();
+
+    if (!genRes.ok) {
+      throw new Error(genData?.error || "Generation request failed");
+    }
+
+    // ✅ Poll for generation status including PDF generation
+    setStatusMessage("Waiting for the proposal to be generated...");
+
+    // Get task_id from response for status polling
+    const taskId = genData.task_id;
+    if (!taskId) {
+      setErrorMessage("❌ No task ID returned from generation request");
       return;
     }
-    try {
-      setIsSubmitting(true);
-      setStatusMessage("Processing RFP document...");
-      const form = new FormData();
-      form.append("file", rfpFile);
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: form });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) {
-        throw new Error(uploadData?.error || "Upload failed");
-      }
-      const savedPath: string = uploadData.savedPath;
-      let profilePath: string | null = null;
-      let skillsInternalPath: string | null = null;
-      let skillsExternalPath: string | null = null;
-      if (profileFile) {
-        const f = new FormData();
-        f.append("file", profileFile);
-        const r = await fetch("/api/upload", { method: "POST", body: f });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d?.error || "Profile upload failed");
-        profilePath = d.savedPath;
-      }
-      if (skillsInternalFile) {
-        const f = new FormData();
-        f.append("file", skillsInternalFile);
-        const r = await fetch("/api/upload", { method: "POST", body: f });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d?.error || "Internal skills upload failed");
-        skillsInternalPath = d.savedPath;
-      }
-      if (skillsExternalFile) {
-        const f = new FormData();
-        f.append("file", skillsExternalFile);
-        const r = await fetch("/api/upload", { method: "POST", body: f });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d?.error || "External skills upload failed");
-        skillsExternalPath = d.savedPath;
-      }
-      setStatusMessage("Generating proposal...");
-      const genRes = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdf_path: savedPath,
-          client_name: clientName,
-          project_name: projectName,
-          project_type: projectType,
-          timeline,
-          budget_range: budgetRange,
-          profile_path: profilePath,
-          skills_internal_path: skillsInternalPath,
-          skills_external_path: skillsExternalPath,
-        }),
-      });
-      const genData: GenerateResponse = await genRes.json();
-      if (!genRes.ok) {
-        throw new Error(genData?.error || "Generation request failed");
-      }
-      setStatusMessage("Proposal generation completed successfully. Please check your output folder for the generated documents.");
-    } catch (err: any) {
-      setErrorMessage(err?.message || "An unexpected error occurred. Please try again.");
-    } finally {
-      setIsSubmitting(false);
+
+    const generationStatus = await pollForGenerationStatus(taskId, setStatusMessage);
+
+    if (generationStatus) {
+      setStatusMessage("✅ Proposal generated successfully. You can now download the files.");
+      setGenerationCompleted(true);
+    } else {
+      setErrorMessage("⏱️ Proposal generation timed out. Please try again later.");
     }
+  } catch (err: any) {
+    setErrorMessage(err?.message || "An unexpected error occurred. Please try again.");
+  } finally {
+    setIsSubmitting(false);
   }
+}
+
+
+
+
+async function pollForGenerationStatus(
+  taskId: string,
+  statusSetter: (message: string) => void
+): Promise<GenerationStatus | null> {
+  const intervalMs = 3000; // Check every 3 seconds
+
+  while (true) {
+    try {
+      const res = await fetch(`http://localhost:8000/generation_status/${taskId}`);
+      const status: GenerationStatus = await res.json();
+
+      if (res.ok) {
+        // Update UI with current status message from API
+        statusSetter(status.message || "Processing...");
+
+        // Check if generation is completed (success or failure)
+        if (status.status === "completed") {
+          return status; // ✅ Generation completed
+        } else if (status.status === "failed") {
+          throw new Error(status.message || "Generation failed");
+        }
+        // Continue polling if still in progress
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("Generation failed")) {
+        throw err;
+      }
+      console.error("Status polling error:", err);
+    }
+
+    await new Promise(res => setTimeout(res, intervalMs)); // Wait before retrying
+  }
+}
+
+
+
+
+
+
+
+async function handleDownload(filename: string, extension: "pdf" | "docx") {
+  try {
+    // Optional: fetch list from backend and get latest filename
+    const res = await fetch("http://localhost:8000/list_proposals");
+    const data = await res.json();
+
+    if (!res.ok || !data.files || !Array.isArray(data.files)) {
+      throw new Error("Unable to fetch generated proposals");
+    }
+
+    // Find latest file with desired extension
+    const filtered = data.files.filter((f: any) => f.type === `.${extension}`);
+    if (filtered.length === 0) {
+      alert(`No ${extension.toUpperCase()} proposals found.`);
+      return;
+    }
+
+    // Sort by modified timestamp
+    filtered.sort((a: any, b: any) => b.modified - a.modified);
+    const latestFile = filtered[0].filename;
+
+    // Trigger download
+    const downloadUrl = `http://localhost:8000/download_proposal/${latestFile}`;
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = latestFile;
+    a.click();
+  } catch (err: any) {
+    alert(`Failed to download ${extension.toUpperCase()} file: ${err.message}`);
+  }
+}
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col">
@@ -722,7 +472,7 @@ export default function Home() {
                       value={clientName}
                       onChange={(e) => setClientName(e.target.value)}
                       placeholder="Enter client organization name"
-                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
                 </div>
@@ -736,7 +486,7 @@ export default function Home() {
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     placeholder="Enter project title"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
                 
@@ -747,7 +497,7 @@ export default function Home() {
                   <select
                     value={projectType}
                     onChange={(e) => setProjectType(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                    className="w-full px-3 py-2 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                   >
                     <option value="general">General</option>
                     <option value="it">Information Technology</option>
@@ -854,7 +604,7 @@ export default function Home() {
                     value={apiKey}
                     onChange={(e) => storeApiKeyLocally(e.target.value)}
                     placeholder="sk-..."
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="flex-1 px-3 py-2 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                   <button
                     type="button"
@@ -915,7 +665,7 @@ export default function Home() {
                       type="text"
                       value={timeline}
                       onChange={(e) => setTimeline(e.target.value)}
-                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
                 </div>
@@ -932,7 +682,7 @@ export default function Home() {
                       type="text"
                       value={budgetRange}
                       onChange={(e) => setBudgetRange(e.target.value)}
-                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
                 </div>
@@ -979,6 +729,24 @@ export default function Home() {
               )}
             </div>
           )}
+
+
+      {/* Download Buttons */}
+<div className="mt-8 flex justify-center gap-4">
+  <button
+    onClick={() => handleDownload("latest", "pdf")}
+    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+  >
+    Download PDF
+  </button>
+  <button
+    onClick={() => handleDownload("latest", "docx")}
+    className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+  >
+    Download DOCX
+  </button>
+</div>
+
         </div>
       </main>
 
@@ -986,7 +754,7 @@ export default function Home() {
       <footer className="bg-white border-t border-gray-200 py-6 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto text-center text-sm text-gray-600">
           <p>Ensure your backend service is running with proper OpenAI API configuration. Generated proposals will be saved according to your system settings.</p>
-          <p className="mt-2">© {new Date().getFullYear()} ProposalAI. All rights reserved.</p>
+          <p className="mt-2">© {new Date().getFullYear()} Data Panther. All rights reserved.</p>
         </div>
       </footer>
     </div>

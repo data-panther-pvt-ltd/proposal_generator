@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
 
@@ -11,6 +11,9 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<{ type: "idle"|"loading"|"success"|"error"; message?: string }>({ type: "idle" });
   const [uploadedPath, setUploadedPath] = useState<string>("");
+  const [availableFiles, setAvailableFiles] = useState<Array<{filename: string, type: string, size: number}>>([]);
+  const [isPolling, setIsPolling] = useState(false);
+  const [previousFileCount, setPreviousFileCount] = useState(0);
 
   async function handleUpload(): Promise<string> {
     if (!file) throw new Error("Please select a PDF file");
@@ -27,6 +30,100 @@ export default function Home() {
     const data = await res.json();
     return data.path as string;
   }
+
+  async function fetchAvailableFiles() {
+    try {
+      const res = await fetch(`${API_BASE}/list_proposals`);
+      if (res.ok) {
+        const data = await res.json();
+        const newFiles = data.files || [];
+        
+        // Check if new files were added
+        if (newFiles.length > previousFileCount) {
+          setStatus({ type: "success", message: "Proposal generated successfully!" });
+        }
+        
+        setAvailableFiles(newFiles);
+        setPreviousFileCount(newFiles.length);
+      }
+    } catch (err) {
+      console.error("Failed to fetch files:", err);
+    }
+  }
+
+  async function downloadFile(filename: string) {
+    try {
+      const response = await fetch(`${API_BASE}/download_proposal/${filename}`);
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        throw new Error("Download failed");
+      }
+    } catch (err) {
+      setStatus({ type: "error", message: `Failed to download ${filename}` });
+    }
+  }
+
+  function getPdfForProposal(files: Array<{filename: string, type: string, size: number}>) {
+    return files.find(f => f.type === '.pdf')?.filename || '';
+  }
+
+  function getDocxForProposal(files: Array<{filename: string, type: string, size: number}>) {
+    return files.find(f => f.type === '.docx')?.filename || '';
+  }
+
+  function getProposalGroups() {
+    const groups: { [key: string]: Array<{filename: string, type: string, size: number}> } = {};
+    
+    availableFiles.forEach(file => {
+      // Extract timestamp from filename to group related files
+      const match = file.filename.match(/(\d{8}_\d{6})/);
+      if (match) {
+        const timestamp = match[1];
+        if (!groups[timestamp]) {
+          groups[timestamp] = [];
+        }
+        groups[timestamp].push(file);
+      } else {
+        // Fallback grouping for files without timestamp
+        const baseKey = file.filename.replace(/\.(pdf|docx|html|json)$/, '');
+        if (!groups[baseKey]) {
+          groups[baseKey] = [];
+        }
+        groups[baseKey].push(file);
+      }
+    });
+    
+    return Object.entries(groups).map(([key, files]) => ({ key, files }));
+  }
+
+  // Poll for files after successful generation
+  React.useEffect(() => {
+    if (isPolling) {
+      const interval = setInterval(() => {
+        fetchAvailableFiles();
+        
+        // Stop polling after finding new files
+        if (availableFiles.length > previousFileCount) {
+          setIsPolling(false);
+        }
+      }, 3000); // Poll every 3 seconds
+      return () => clearInterval(interval);
+    }
+  }, [isPolling, availableFiles.length, previousFileCount]);
+
+  // Fetch files on component mount
+  React.useEffect(() => {
+    fetchAvailableFiles();
+  }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -48,7 +145,8 @@ export default function Home() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || "Failed to queue generation");
-      setStatus({ type: "success", message: data.message || "Queued" });
+      setStatus({ type: "loading", message: "Generating proposal... This may take a few minutes." });
+      setIsPolling(true); // Start polling for generated files
     } catch (err: any) {
       setStatus({ type: "error", message: err?.message || "Something went wrong" });
     }
@@ -110,12 +208,56 @@ export default function Home() {
           </form>
         </section>
 
+        {availableFiles.length > 0 && (
+          <section className="card" style={{ padding: 24, marginBottom: 16 }}>
+            <div className="h2" style={{ marginBottom: 12 }}>Generated Proposals</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {getProposalGroups().map((group) => {
+                const pdfFile = getPdfForProposal(group.files);
+                const docxFile = getDocxForProposal(group.files);
+                const htmlFile = group.files.find(f => f.type === '.html');
+                const proposalName = htmlFile?.filename.replace('.html', '') || group.key;
+                
+                return (
+                  <div key={group.key} style={{ border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{ padding: 16, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ fontWeight: 600, color: "var(--color-black)", marginBottom: 8 }}>
+                        {proposalName.replace(/proposal_/, '').replace(/_/g, ' ')}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        {pdfFile && (
+                          <button 
+                            className="btn btn-secondary"
+                            onClick={() => downloadFile(pdfFile)}
+                            style={{ padding: "8px 12px", fontSize: 12 }}
+                          >
+                            ⬇️ Download PDF
+                          </button>
+                        )}
+                        {docxFile && (
+                          <button 
+                            className="btn btn-secondary"
+                            onClick={() => downloadFile(docxFile)}
+                            style={{ padding: "8px 12px", fontSize: 12 }}
+                          >
+                            📝 Download DOCX
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <section className="card" style={{ padding: 24 }}>
           <div className="h2" style={{ marginBottom: 8 }}>Tips</div>
           <ul className="muted" style={{ marginLeft: 18, lineHeight: 1.8 }}>
             <li>Use clear client and project names for organized outputs.</li>
             <li>Upload an RFP PDF to guide the generator with RAG.</li>
-            <li>While queued, check backend logs for progress.</li>
+            <li>Files will appear here once generation is complete.</li>
           </ul>
         </section>
       </main>

@@ -10,13 +10,11 @@ import os
 from main import load_config, setup_logging, get_logger, get_all_agents, coordinator, create_request_from_rfp, SimpleCostTracker, ProposalGenerator
 app = FastAPI(title="Proposal Generator API", version="2.0")
 
+# In-memory status tracking
+generation_status = {}
+
 # Enable CORS for local development and typical frontend ports
-origins = [
-    "http://localhost",
-    "http://127.0.0.1",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,12 +31,20 @@ class ProposalRequestInput(BaseModel):
     project_type: str
 
 
-def run_proposal_task(input_data: ProposalRequestInput, config: dict):
+def run_proposal_task(input_data: ProposalRequestInput, config: dict, task_id: str):
     """Background task that generates the proposal and saves outputs"""
     logger = get_logger(__name__)
 
     async def _async_task():
         try:
+            # Update status: starting
+            generation_status[task_id] = {
+                "status": "starting",
+                "message": "Initializing proposal generation...",
+                "timestamp": datetime.now().isoformat(),
+                "pdf_generated": False
+            }
+
             logger.info("=" * 60)
             logger.info("PROPOSAL GENERATOR v2.0-SDK - Starting via API (Background Task)")
             logger.info("=" * 60)
@@ -47,6 +53,14 @@ def run_proposal_task(input_data: ProposalRequestInput, config: dict):
             all_agents = get_all_agents()
             logger.info(f"✓ Available agents: {list(all_agents.keys())}")
             logger.info(f"✓ Coordinator agent: {coordinator.name}")
+
+            # Update status: processing RFP
+            generation_status[task_id] = {
+                "status": "processing_rfp",
+                "message": "Processing RFP document...",
+                "timestamp": datetime.now().isoformat(),
+                "pdf_generated": False
+            }
 
             # RFP config
             rfp_config = config.get("rfp", {})
@@ -72,11 +86,27 @@ def run_proposal_task(input_data: ProposalRequestInput, config: dict):
             except Exception:
                 pass
 
+            # Update status: generating proposal
+            generation_status[task_id] = {
+                "status": "generating",
+                "message": "Generating proposal content...",
+                "timestamp": datetime.now().isoformat(),
+                "pdf_generated": False
+            }
+
             # Proposal generator (async)
             cost_tracker = SimpleCostTracker()
             generator = ProposalGenerator(cost_tracker=cost_tracker)
 
             proposal = await generator.generate_proposal(request)
+
+            # Update status: saving files
+            generation_status[task_id] = {
+                "status": "saving",
+                "message": "Saving proposal files...",
+                "timestamp": datetime.now().isoformat(),
+                "pdf_generated": bool(proposal.get('pdf_path'))
+            }
 
             # Save outputs
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -91,9 +121,31 @@ def run_proposal_task(input_data: ProposalRequestInput, config: dict):
             with open(html_file, "w") as f:
                 f.write(proposal.get("html", ""))
 
+            # Update final status
+            pdf_generated = bool(proposal.get('pdf_path'))
+            generation_status[task_id] = {
+                "status": "completed",
+                "message": f"✅ Proposal generation completed successfully! {('PDF generated successfully.' if pdf_generated else 'Note: PDF generation may have failed.')}",
+                "timestamp": datetime.now().isoformat(),
+                "pdf_generated": pdf_generated,
+                "pdf_path": proposal.get('pdf_path', ''),
+                "files": {
+                    "json": str(json_file),
+                    "html": str(html_file)
+                }
+            }
+
             logger.info(f"✓ Proposal generation completed. Files saved: {json_file}, {html_file}")
+            if pdf_generated:
+                logger.info(f"✅ PDF generated successfully: {proposal['pdf_path']}")
 
         except Exception as e:
+            generation_status[task_id] = {
+                "status": "failed",
+                "message": f"❌ Proposal generation failed: {str(e)}",
+                "timestamp": datetime.now().isoformat(),
+                "pdf_generated": False
+            }
             logger.error(f"❌ Background proposal generation failed: {str(e)}")
 
     # Run async code inside sync background task
@@ -103,6 +155,7 @@ def run_proposal_task(input_data: ProposalRequestInput, config: dict):
 @app.post("/generate_proposal")
 async def generate_proposal(input_data: ProposalRequestInput, background_tasks: BackgroundTasks):
     """FastAPI endpoint to queue proposal generation as background task"""
+    import uuid
 
     # Load config
     config = load_config()
@@ -124,11 +177,23 @@ async def generate_proposal(input_data: ProposalRequestInput, background_tasks: 
             detail="RFP auto_process is not enabled in settings.yml"
         )
 
+    # Generate unique task ID
+    task_id = str(uuid.uuid4())
+
+    # Initialize status
+    generation_status[task_id] = {
+        "status": "queued",
+        "message": "Proposal generation queued",
+        "timestamp": datetime.now().isoformat(),
+        "pdf_generated": False
+    }
+
     # Schedule background task
-    background_tasks.add_task(run_proposal_task, input_data, config)
+    background_tasks.add_task(run_proposal_task, input_data, config, task_id)
 
     return {
         "status": "queued",
+        "task_id": task_id,
         "message": "Proposal generation started in background",
         "client_name": input_data.client_name,
         "project_name": input_data.project_name
@@ -215,3 +280,18 @@ async def list_proposals():
     files.sort(key=lambda x: x["modified"], reverse=True)
 
     return {"files": files}
+
+
+@app.get("/generation_status/{task_id}")
+async def get_generation_status(task_id: str):
+    """Get the status of a proposal generation task"""
+    if task_id not in generation_status:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return generation_status[task_id]
+
+
+@app.get("/generation_status")
+async def get_all_generation_status():
+    """Get all generation statuses (for debugging)"""
+    return generation_status
