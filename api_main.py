@@ -206,7 +206,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     if file.content_type not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    uploads_dir = Path("/home/datapanther/Azeem_Products/proposal_generator/uploads")
+    uploads_dir = Path("uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
     safe_filename = file.filename or "uploaded.pdf"
@@ -235,7 +235,7 @@ async def download_proposal(filename: str):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     # Look for the file in the output directory
-    output_dir = Path("/home/datapanther/Azeem_Products/proposal_generator/generated_proposals")
+    output_dir = Path("generated_proposals")
     file_path = output_dir / filename
 
     if not file_path.exists():
@@ -263,7 +263,7 @@ async def download_proposal(filename: str):
 @app.get("/list_proposals")
 async def list_proposals():
     """List available generated proposal files"""
-    output_dir = Path("/home/datapanther/Azeem_Products/proposal_generator/generated_proposals")
+    output_dir = Path("generated_proposals")
     output_dir.mkdir(exist_ok=True)
 
     files = []
