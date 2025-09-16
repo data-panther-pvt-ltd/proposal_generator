@@ -18,7 +18,7 @@ npm run dev
 Open http://localhost:3000
 
 ## Config
-- Frontend calls backend at `BACKEND_URL` or defaults to `http://127.0.0.1:8000`.
+- Frontend calls backend at `BACKEND_URL` or defaults to `http://34.28.203.178:8003`.
 - Uploads are saved to `../uploads` relative to `frontend` directory.
 
 ## Notes

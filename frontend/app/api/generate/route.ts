@@ -11,7 +11,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "pdf_path is required" }, { status: 400 });
     }
 
-    const apiBase = backendUrl || process.env.BACKEND_URL || "http://127.0.0.1:8000";
+    const apiBase = backendUrl || process.env.BACKEND_URL || "http://34.28.203.178:8003";
 
     const res = await fetch(`${apiBase}/generate_proposal`, {
       method: "POST",
