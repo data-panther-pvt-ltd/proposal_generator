@@ -4,10 +4,13 @@ Implements advanced retrieval strategies for better context extraction
 """
 import logging
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from pathlib import Path
 import json
 from openai import OpenAI
+
+if TYPE_CHECKING:
+    from core.simple_cost_tracker import SimpleCostTracker
 
 from core.document_processor import DocumentProcessor, DocumentChunk
 from core.embedding_service import EmbeddingService
@@ -22,16 +25,18 @@ class RAGRetriever:
     Advanced RAG retriever with HyDE and reranking capabilities
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], cost_tracker: Optional['SimpleCostTracker'] = None):
         """
         Initialize RAG retriever with configuration
         
         Args:
             config: Configuration dictionary from settings.yml
+            cost_tracker: Optional cost tracker for API usage
         """
         self.config = config
         self.vector_config = config.get('vector_db', {})
         self.openai_config = config.get('openai', {})
+        self.cost_tracker = cost_tracker
         
         # Track loaded PDFs and their vector stores
         self.current_pdf_path = None
@@ -42,13 +47,15 @@ class RAGRetriever:
             chunk_size=self.vector_config.get('chunk_size', 800),
             chunk_overlap=self.vector_config.get('chunk_overlap', 120),
             min_chunk_size=self.vector_config.get('min_chunk_size', 100),
-            config=config  # Pass full config for PDF processing settings
+            config=config,  # Pass full config for PDF processing settings
+            cost_tracker=self.cost_tracker
         )
         
         self.embedding_service = EmbeddingService(
             model=self.vector_config.get('embedding_model', 'text-embedding-ada-002'),
             dimensions=self.vector_config.get('embedding_dimensions', 1536),
-            batch_size=self.vector_config.get('batch_size', 100)
+            batch_size=self.vector_config.get('batch_size', 100),
+            cost_tracker=self.cost_tracker
         )
         
         # Initialize with None - will create on demand for each PDF
@@ -66,7 +73,7 @@ class RAGRetriever:
         # Model configuration from settings
         self.llm_model = self.openai_config.get('model', 'gpt-4o')
         self.llm_temperature = 0.7
-        self.llm_max_tokens = 300
+        self.llm_max_completion_tokens = 300
         
         # Settings from configuration file
         self.enable_hyde = self.vector_config.get('enable_hyde', False)
@@ -359,9 +366,13 @@ class RAGRetriever:
                     }
                 ],
                 temperature=self.llm_temperature,
-                max_tokens=self.llm_max_tokens
+                max_completion_tokens=self.llm_max_completion_tokens
             )
-            
+
+            # Track cost if cost_tracker is available
+            if self.cost_tracker:
+                self.cost_tracker.track_completion(response, model=self.llm_model)
+
             variations = response.choices[0].message.content.strip().split('\n')
             return [v.strip() for v in variations if v.strip()][:3]
             
@@ -385,9 +396,13 @@ class RAGRetriever:
                     }
                 ],
                 temperature=0.5,
-                max_tokens=self.llm_max_tokens
+                max_completion_tokens=self.llm_max_completion_tokens
             )
-            
+
+            # Track cost if cost_tracker is available
+            if self.cost_tracker:
+                self.cost_tracker.track_completion(response, model=self.llm_model)
+
             hyde_doc = response.choices[0].message.content.strip()
             return [hyde_doc] if hyde_doc else []
             
@@ -447,14 +462,14 @@ class RAGRetriever:
         
         return reranked
     
-    def get_context_for_agent(self, query: str, pdf_path: str, max_tokens: int = 2000) -> str:
+    def get_context_for_agent(self, query: str, pdf_path: str, max_completion_tokens: int = 2000) -> str:
         """
         Get formatted context for agent consumption
         
         Args:
             query: The query to search for
             pdf_path: Path to the PDF to search in
-            max_tokens: Maximum tokens to return
+            max_completion_tokens: Maximum tokens to return
             
         Returns:
             Formatted context string
@@ -473,7 +488,7 @@ class RAGRetriever:
             chunk_text = chunk['text']
             chunk_tokens = chunk['metadata'].get('token_count', len(chunk_text.split()) * 1.3)
             
-            if current_tokens + chunk_tokens > max_tokens:
+            if current_tokens + chunk_tokens > max_completion_tokens:
                 break
             
             pages = chunk.get('page_numbers', [])

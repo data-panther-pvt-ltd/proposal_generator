@@ -10,6 +10,10 @@ import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential
 import tiktoken
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.simple_cost_tracker import SimpleCostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,8 @@ class EmbeddingService:
         model: str = "text-embedding-ada-002",
         dimensions: Optional[int] = 1536,  # Dimensions for text-embedding-ada-002
         batch_size: int = 100,
-        max_retries: int = 3
+        max_retries: int = 3,
+        cost_tracker: Optional['SimpleCostTracker'] = None
     ):
         """
         Initialize embedding service
@@ -49,6 +54,7 @@ class EmbeddingService:
         self.dimensions = dimensions
         self.batch_size = batch_size
         self.max_retries = max_retries
+        self.cost_tracker = cost_tracker
         
         # Token counting for the model
         self.encoding = tiktoken.get_encoding("cl100k_base")
@@ -56,19 +62,20 @@ class EmbeddingService:
         # Model-specific limits - support both old and new models
         self.model_limits = {
             "text-embedding-ada-002": {
-                "max_tokens": 8191,
+                "max_completion_tokens": 8191,
                 "dimensions": 1536
             },
             "text-embedding-3-small": {
-                "max_tokens": 8191,
+                "max_completion_tokens": 8191,
                 "dimensions": 1536
             },
             "text-embedding-3-large": {
-                "max_tokens": 8191,
+                "max_completion_tokens": 8191,
                 "dimensions": 3072
             }
         }
         
+        # These will be updated from actual API responses, not tiktoken estimates
         self.total_tokens_used = 0
         self.total_api_calls = 0
         
@@ -98,12 +105,25 @@ class EmbeddingService:
             # Extract embeddings
             embeddings = [item.embedding for item in response.data]
             
-            # Track usage
+            # Track usage from actual API response
             self.total_api_calls += 1
-            tokens_used = sum(len(self.encoding.encode(text)) for text in texts)
-            self.total_tokens_used += tokens_used
+            actual_tokens_used = 0
             
-            logger.debug(f"Embedded {len(texts)} texts using {tokens_used} tokens")
+            # Get actual token usage from API response
+            if hasattr(response, 'usage') and response.usage:
+                actual_tokens_used = response.usage.total_tokens
+                self.total_tokens_used += actual_tokens_used
+                
+                # Track cost if cost_tracker is available  
+                if self.cost_tracker:
+                    self.cost_tracker.track_completion(response, self.model)
+                    
+                logger.debug(f"Embedded {len(texts)} texts using {actual_tokens_used} actual tokens from API")
+            else:
+                # Fallback to tiktoken estimate only if API doesn't provide usage
+                estimated_tokens = sum(len(self.encoding.encode(text)) for text in texts)
+                self.total_tokens_used += estimated_tokens
+                logger.warning(f"API response missing usage data, using tiktoken estimate: {estimated_tokens} tokens")
             
             return embeddings
             
@@ -126,18 +146,18 @@ class EmbeddingService:
         
         # Validate and truncate texts if needed
         processed_texts = []
-        max_tokens = self.model_limits.get(self.model, {}).get("max_tokens", 8191)
+        max_completion_tokens = self.model_limits.get(self.model, {}).get("max_completion_tokens", 8191)
         
         for text in texts:
             # Count tokens
             tokens = self.encoding.encode(text)
             
-            if len(tokens) > max_tokens:
+            if len(tokens) > max_completion_tokens:
                 # Truncate to fit within limits
-                truncated_tokens = tokens[:max_tokens]
+                truncated_tokens = tokens[:max_completion_tokens]
                 truncated_text = self.encoding.decode(truncated_tokens)
                 processed_texts.append(truncated_text)
-                logger.warning(f"Truncated text from {len(tokens)} to {max_tokens} tokens")
+                logger.warning(f"Truncated text from {len(tokens)} to {max_completion_tokens} tokens")
             else:
                 processed_texts.append(text)
         
@@ -292,7 +312,7 @@ class EmbeddingService:
             "total_texts": len(texts),
             "total_tokens": total_tokens,
             "model": self.model,
-            "max_tokens_per_text": model_info.get("max_tokens", 8191)
+            "max_completion_tokens_per_text": model_info.get("max_completion_tokens", 8191)
         }
     
     def get_usage_stats(self) -> Dict:

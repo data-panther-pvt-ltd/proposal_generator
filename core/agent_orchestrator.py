@@ -27,8 +27,8 @@ from proposal_agents.sdk_agents import (
     content_generator_agent,
     research_agent,
     budget_calculator_agent,
-    chart_generator_agent,
-    quality_evaluator_agent
+    quality_evaluator_agent,
+    chart_generator_agent
 )
 
 # Legacy components for compatibility
@@ -45,8 +45,8 @@ class AgentOrchestrator:
     def __init__(self, config: Dict, client: Optional[object] = None):
         self.config = config
         
-        # Initialize cost tracker
-        self.cost_tracker = SimpleCostTracker()
+        # Initialize cost tracker with config
+        self.cost_tracker = SimpleCostTracker(config)
         
         # Initialize SDK-based ProposalRunner with cost tracker
         self.proposal_runner = ProposalRunner(config, cost_tracker=self.cost_tracker)
@@ -61,8 +61,8 @@ class AgentOrchestrator:
             'content_generator': content_generator_agent,
             'researcher': research_agent,
             'budget_calculator': budget_calculator_agent,
-            'chart_generator': chart_generator_agent,
-            'quality_evaluator': quality_evaluator_agent
+            'quality_evaluator': quality_evaluator_agent,
+            'chart_generator': chart_generator_agent
         }
         
         # Keep reference to RAG retriever for compatibility
@@ -85,7 +85,7 @@ class AgentOrchestrator:
         agents_list = section_config.get('agents', [])
         
         # Route through coordinator if multiple agents are involved
-        return len(agents_list) > 1 or section_config.get('generate_chart', False)
+        return len(agents_list) > 1
     
     async def generate_section(
         self, 
@@ -181,7 +181,7 @@ class AgentOrchestrator:
         )
         
         # Track cost
-        self.cost_tracker.track_completion(response, model="gpt-4o")
+        self.cost_tracker.track_completion(response)
         
         # Extract content
         content = self._extract_content_from_response(response)
@@ -225,7 +225,7 @@ class AgentOrchestrator:
         )
         
         # Track cost
-        self.cost_tracker.track_completion(response, model="gpt-4o")
+        self.cost_tracker.track_completion(response)
         
         # Extract content
         content = self._extract_content_from_response(response)
@@ -266,17 +266,8 @@ SECTION REQUIREMENTS:
 - Agents available: {', '.join(agents_needed)}
 """
         
-        # Add chart generation requirement
-        if section_config.get('generate_chart'):
-            message += f"\n- Generate {section_config['generate_chart']} chart\n"
-        
-        # Add skills requirement
-        if section_config.get('use_skills'):
-            message += "\n- Include skills and resource information\n"
-        
-        message += "\nRoute to appropriate specialist agents as needed and coordinate their outputs."
-        
-        return message
+
+
     
     def _build_specialist_message(
         self, 
@@ -476,7 +467,7 @@ Return only a numeric score.
                 messages=eval_message,
                 context_variables={"section_name": section_name}
             )
-            self.cost_tracker.track_completion(response, model="gpt-4o")
+            self.cost_tracker.track_completion(response)
             
             score_text = self._extract_content_from_response(response)
             
@@ -491,86 +482,7 @@ Return only a numeric score.
         except Exception as e:
             logger.warning(f"Quality evaluation failed: {e}")
             return 7.5  # Default score if evaluation fails
-    
-    async def generate_chart(self, chart_type: str, data: Dict) -> Dict:
-        """Generate a chart using the SDK chart generator agent"""
-        logger.info(f"Generating {chart_type} chart using SDK chart generator")
-        
-        try:
-            chart_generator = self.specialists['chart_generator']
-            
-            # Prepare chart generation message
-            chart_message = f"""
-Generate a {chart_type} chart with the following specifications:
 
-Chart Type: {chart_type}
-Data: {json.dumps(data, indent=2, default=str)}
-
-Provide the chart in a format suitable for proposal inclusion.
-"""
-            
-            # Set context variables
-            context_variables = {
-                'chart_type': chart_type,
-                'data': data
-            }
-            
-            # Run chart generator agent
-            response = Runner.run_sync(
-                agent=chart_generator,
-                messages=chart_message, 
-                context_variables=context_variables
-            )
-            self.cost_tracker.track_completion(response, model="gpt-4o")
-            
-            # Extract chart content
-            chart_content = self._extract_content_from_response(response)
-            
-            result = {
-                'content': chart_content,
-                'metadata': {
-                    'chart_type': chart_type,
-                    'agent_used': 'chart_generator',
-                    'generated_at': datetime.now().isoformat(),
-                    'response': response
-                }
-            }
-            
-            logger.info(f"SDK chart generation complete: {chart_type}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"SDK chart generation failed: {e}")
-            
-            # Return error result instead of fallback
-            return {
-                'error': str(e), 
-                'chart_type': chart_type,
-                'fallback_needed': True,
-                'metadata': {
-                    'failed_at': datetime.now().isoformat(),
-                    'error': str(e)
-                }
-            }
-    
-    def _prepare_chart_data(self, chart_type: str, context: Dict) -> Dict:
-        """Prepare data for chart generation based on chart type"""
-        request = context.get('request')
-        
-        if 'gantt' in chart_type.lower() or 'timeline' in chart_type.lower():
-            return self.proposal_runner._extract_timeline_data(None, context)
-        elif 'budget' in chart_type.lower():
-            skills_data = context.get('skills_data', {})
-            return {
-                'type': 'budget_breakdown',
-                'categories': ['Development', 'Testing', 'Infrastructure', 'Management', 'Contingency'],
-                'values': [45, 20, 15, 15, 5],
-                'skills_data': skills_data
-            }
-        elif 'risk' in chart_type.lower():
-            return self.proposal_runner._prepare_risk_matrix_data()
-        else:
-            return context.get('data', {})
     
     async def run_agent_by_name(self, agent_name: str, message: str, context: Dict = None) -> Dict:
         """Run a specific SDK agent by name"""
@@ -597,7 +509,7 @@ Provide the chart in a format suitable for proposal inclusion.
                 messages=message, 
                 context_variables=context_variables
             )
-            self.cost_tracker.track_completion(response, model="gpt-4o")
+            self.cost_tracker.track_completion(response)
             
             # Extract content
             content = self._extract_content_from_response(response)
@@ -696,6 +608,6 @@ Provide the chart in a format suitable for proposal inclusion.
     
     def reset_cost_tracking(self):
         """Reset cost tracking for new proposal generation"""
-        self.cost_tracker = SimpleCostTracker()
+        self.cost_tracker = SimpleCostTracker(self.config)
         self.proposal_runner.cost_tracker = self.cost_tracker
         logger.info("Cost tracking reset for new proposal generation")

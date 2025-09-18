@@ -149,19 +149,6 @@ class HTMLGenerator:
             margin-bottom: 8px;
         }
         
-        .chart-container {
-            margin: 30px 0;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            text-align: center;
-        }
-        
-        .chart-title {
-            font-weight: bold;
-            margin-bottom: 15px;
-            color: #666;
-        }
         
         table {
             width: 100%;
@@ -341,39 +328,7 @@ class HTMLGenerator:
             margin: 20px 0;
         }
     </style>
-    {% if include_plotly %}
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
-    <style>
-        /* Plotly chart specific styles */
-        .plotly-graph-div {
-            width: 100% !important;
-            height: auto !important;
-            min-height: 400px;
-            margin: 20px 0;
-        }
-        
-        .chart-container .plotly-graph-div {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        .chart-error {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            color: #856404;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 10px 0;
-            text-align: center;
-        }
-        
-        .chart-wrapper {
-            overflow-x: auto;
-            overflow-y: visible;
-        }
-    </style>
-    {% endif %}
+    
 </head>
 <body>
     <div class="container">
@@ -427,14 +382,6 @@ class HTMLGenerator:
                     {{ section_content.content | safe }}
                 {% endif %}
                 
-                {% if section_name in charts and charts[section_name] %}
-                <div class="chart-container" id="chart-container-{{ loop.index }}">
-                    <div class="chart-title">{{ section_name }} Visualization</div>
-                    <div class="chart-wrapper">
-                        {{ charts[section_name] | safe }}
-                    </div>
-                </div>
-                {% endif %}
             </div>
             {% endfor %}
         </div>
@@ -470,9 +417,10 @@ class HTMLGenerator:
     def generate(self, proposal: Dict) -> str:
         """Generate HTML from proposal data"""
         
-        # Format sections content
+        # Format sections content (handle both 'sections' and 'generated_sections')
         formatted_sections = {}
-        for section_name, section_data in proposal.get('sections', {}).items():
+        sections_data = proposal.get('generated_sections', proposal.get('sections', {}))
+        for section_name, section_data in sections_data.items():
             if isinstance(section_data, dict):
                 content = section_data.get('content', '')
                 if isinstance(content, dict):
@@ -494,56 +442,9 @@ class HTMLGenerator:
                 formatted_sections[section_name] = {
                     'content': rendered_html
                 }
-        
-        # Process charts first - convert base64 or other formats to HTML (supports lists)
-        formatted_charts = self._process_charts(proposal.get('charts', {}))
+    
 
-        # Suppress charts for specific sections entirely (per product requirement)
-        suppressed_chart_sections = {
-            "Project Scope Visualization",
-            "Implementation Strategy Visualization",
-            "Technical Approach and Methodology Visualization",
-            "Technical Approach and Methodology"
-        }
-        for suppressed in list(formatted_charts.keys()):
-            if suppressed in suppressed_chart_sections:
-                del formatted_charts[suppressed]
-
-        # Check if we need Plotly library (only for interactive charts)
-        def _has_any_chart(charts_dict):
-            if not charts_dict:
-                return False
-            for v in charts_dict.values():
-                if isinstance(v, list) and any(bool(item) for item in v):
-                    return True
-                if isinstance(v, str) and v.strip():
-                    return True
-                if isinstance(v, dict) and v:
-                    return True
-            return False
-
-        include_plotly = self.output_format == 'interactive' and _has_any_chart(formatted_charts)
-
-        # Inject charts inline into section content, except preserved sections that should use template placement
-        preserved_template_sections = {"Proposed Solution Visualization"}
-        charts_for_template = {}
-
-        for section_name in list(formatted_sections.keys()):
-            charts_for_section = formatted_charts.get(section_name)
-            if not charts_for_section:
-                continue
-
-            if section_name in preserved_template_sections:
-                # Keep original behavior: let the template render the chart below the content
-                # Ensure a single HTML string is passed to the template (use first if list)
-                if isinstance(charts_for_section, list) and len(charts_for_section) > 0:
-                    charts_for_template[section_name] = charts_for_section[0]
-                else:
-                    charts_for_template[section_name] = charts_for_section
-            else:
-                # Default: inject inline and do not pass to template to avoid duplicates
-                injected = self._inject_charts_into_content(section_name, formatted_sections[section_name]['content'], charts_for_section)
-                formatted_sections[section_name]['content'] = injected
+    
 
         # Prepare template context
         context = {
@@ -553,476 +454,88 @@ class HTMLGenerator:
             'date': datetime.now().strftime('%B %d, %Y'),
             'timeline': proposal.get('timeline', 'TBD'),
             'proposal_id': f"AzmX-{datetime.now().strftime('%Y%m%d')}-001",
-            'sections': formatted_sections,
-            'charts': charts_for_template,
-            'include_plotly': include_plotly,
-            'company_name': self.config['company']['name'],
-            'company_email': self.config['company']['email'],
-            'company_website': self.config['company']['website'],
+            'sections': formatted_sections,            
+            'company_name': self.config.get('company', {}).get('name', 'AzmX Technologies'),
+            'company_email': self.config.get('company', {}).get('email', 'contact@azmx.com'),
+            'company_website': self.config.get('company', {}).get('website', 'www.azmx.com'),
             'year': datetime.now().year
         }
         
         # Render template
         return self.template.render(**context)
 
-    def _process_charts(self, charts: Dict) -> Dict:
-        """Enhanced chart processing with better error handling and list support"""
-        formatted_charts = {}
+    def _clean_json_artifacts(self, content: str) -> str:
+        """Clean JSON artifacts from content"""
+        if not content:
+            return ""
 
-        for section_name, chart_info in charts.items():
-            try:
-                # Support multiple charts per section
-                if isinstance(chart_info, list):
-                    section_charts = []
-                    for item in chart_info:
-                        if isinstance(item, dict):
-                            chart_data = item.get('data', '')
-                            chart_type = item.get('type', 'chart')
-                        elif isinstance(item, str):
-                            chart_data = item
-                            chart_type = 'chart'
-                        else:
-                            section_charts.append(self._create_chart_placeholder('Invalid chart format'))
-                            continue
-
-                        if self._is_plotly_html(chart_data):
-                            if self.output_format == 'interactive':
-                                section_charts.append(self._clean_plotly_html(chart_data))
-                            else:
-                                section_charts.append(self._create_chart_placeholder(
-                                    f'Interactive {chart_type} chart - view in HTML format'
-                                ))
-                        elif self._is_base64_image(chart_data):
-                            section_charts.append(self._process_base64_image(chart_data, chart_type))
-                        elif self._contains_html(chart_data):
-                            section_charts.append(self._validate_and_clean_chart_html(chart_data) or self._create_chart_placeholder('Invalid chart HTML'))
-                        else:
-                            section_charts.append(self._create_chart_placeholder(f'{chart_type.title()} visualization placeholder'))
-
-                    formatted_charts[section_name] = section_charts
-                    continue
-
-                if isinstance(chart_info, dict):
-                    chart_data = chart_info.get('data', '')
-                    chart_type = chart_info.get('type', 'chart')
-                elif isinstance(chart_info, str):
-                    chart_data = chart_info
-                    chart_type = 'chart'
-                else:
-                    formatted_charts[section_name] = self._create_chart_placeholder('Invalid chart format')
-                    continue
-
-                # Process chart based on content type
-                if self._is_plotly_html(chart_data):
-                    if self.output_format == 'interactive':
-                        formatted_charts[section_name] = self._clean_plotly_html(chart_data)
-                    else:
-                        formatted_charts[section_name] = self._create_chart_placeholder(
-                            f'Interactive {chart_type} chart - view in HTML format'
-                        )
-                elif self._is_base64_image(chart_data):
-                    formatted_charts[section_name] = self._process_base64_image(chart_data, chart_type)
-                elif self._contains_html(chart_data):
-                    formatted_charts[section_name] = self._validate_and_clean_chart_html(chart_data)
-                else:
-                    formatted_charts[section_name] = self._create_chart_placeholder(
-                        f'{chart_type.title()} visualization placeholder'
-                    )
-
-
-            except Exception as e:
-                print(f"[HTMLGenerator] Error processing chart for {section_name}: {str(e)}")
-                formatted_charts[section_name] = self._create_chart_placeholder(
-                    f'Chart processing error for {section_name}'
-                )
-
-        return formatted_charts
-
-    def _inject_charts_into_content(self, section_name: str, html_content: str, charts_for_section: Any) -> str:
-        """Place charts inline based on placeholders or append at the end if none.
-
-        Supported placeholders inside content HTML (case-insensitive):
-        - [[CHART]] or <!--CHART--> inserts the next chart in order
-        - [[CHART:N]] inserts the Nth chart (1-based index)
-        If charts_for_section is a single string, it's treated as one chart.
-        """
         import re
-
-        if not charts_for_section:
-            return html_content
-
-        charts_list = charts_for_section if isinstance(charts_for_section, list) else [charts_for_section]
-        charts_list = [c for c in charts_list if isinstance(c, str) and c.strip()]
-        if not charts_list:
-            return html_content
-
-        def replace_indexed(match):
-            idx_group = match.group(1)
-            if idx_group:
-                try:
-                    idx = int(idx_group) - 1
-                except ValueError:
-                    idx = -1
-                if 0 <= idx < len(charts_list):
-                    return f'<div class="chart-container"><div class="chart-title">{section_name} Visualization</div><div class="chart-wrapper">{charts_list[idx]}</div></div>'
-                return ''
-            # unindexed, pop from the front if available
-            if charts_list:
-                chart_html = charts_list.pop(0)
-                return f'<div class="chart-container"><div class="chart-title">{section_name} Visualization</div><div class="chart-wrapper">{chart_html}</div></div>'
-            return ''
-
-        # Insert at placeholders
-        pattern = re.compile(r"\[\[CHART(?::(\d+))?\]\]|<!--\s*CHART(?:\s*:\s*(\d+))?\s*-->", re.IGNORECASE)
-
-        def repl(m):
-            # combine either group 1 or 2 for index
-            index_str = m.group(1) or m.group(2)
-            return replace_indexed(type('obj', (), {'group': lambda _i: index_str}))
-
-        new_html = pattern.sub(lambda m: replace_indexed(type('obj', (), {
-            'group': lambda i: (m.group(1) if i == 1 else (m.group(2) if i == 2 else None))
-        })), html_content)
-
-        # If there are any remaining charts and no placeholders consumed them, append them after the content
-        if new_html == html_content or any(token in html_content for token in ['[[CHART', '<!--CHART']):
-            # Append any charts not yet placed
-            if charts_list:
-                appended = '\n'.join([
-                    f'<div class="chart-container"><div class="chart-title">{section_name} Visualization</div><div class="chart-wrapper">{c}</div></div>'
-                    for c in charts_list
-                ])
-                new_html = f"{new_html}\n{appended}"
-
-        return new_html
-
-    def _contains_html(self, content: str) -> bool:
-        """Check if content contains HTML tags"""
-        return '<' in content and '>' in content
-
-
-    def _process_single_chart(self, chart_data: str, chart_type: str, chart_generator, chart_title: str = None) -> str:
-        """Process a single chart based on its format and output type with enhanced Plotly support"""
-        
-        if not chart_data:
-            return self._create_chart_placeholder('No chart data available')
-        
-        # Check if it's already HTML from Plotly (interactive or static)
-        if self._is_plotly_html(chart_data):
-            if self.output_format == 'interactive':
-                # For interactive mode, return Plotly HTML as-is
-                return self._clean_plotly_html(chart_data)
-            else:
-                # For static mode, if we get interactive HTML, try to extract any embedded images
-                # or create a placeholder since we can't render interactive content in PDF
-                return self._extract_static_from_plotly_html(chart_data, chart_type)
-        
-        # Check if it's a base64 image (from static chart generation)
-        elif self._is_base64_image(chart_data):
-            return self._process_base64_image(chart_data, chart_type)
-        
-        # Check if it's markdown with embedded image
-        elif '![' in chart_data and '](' in chart_data:
-            return self._process_markdown_image(chart_data, chart_type)
-        
-        # Check if it's raw HTML that looks like a div or complete chart
-        elif '<' in chart_data and '>' in chart_data:
-            # Clean and validate the HTML
-            cleaned_html = self._validate_and_clean_chart_html(chart_data)
-            return cleaned_html if cleaned_html else chart_data
-        
-        # Try to process as JSON data and regenerate chart
-        else:
-            return self._regenerate_chart_from_data(chart_data, chart_type, chart_generator)
-    
-    def _is_plotly_html(self, content: str) -> bool:
-        """Check if content is Plotly generated HTML"""
-        plotly_indicators = [
-            'plotly-graph-div',
-            'Plotly.newPlot',
-            'data-plotly-domain',
-            'plotly.js',
-            'plotly-latest.min.js'
-        ]
-        return any(indicator in content for indicator in plotly_indicators)
-    
-    def _clean_plotly_html(self, html_content: str, chart_title: str = None) -> str:
-        """Clean and prepare Plotly HTML for embedding with enhanced processing"""
-        import re
-        import uuid
-        
-        try:
-            print(f"[HTMLGenerator] Cleaning Plotly HTML for {chart_title or 'chart'}")
-            
-            # Remove any external Plotly script tags since we include CDN in head
-            external_script_patterns = [
-                r'<script[^>]*src[^>]*plotly[^>]*></script>',
-                r'<script[^>]*src[^>]*plot\.ly[^>]*></script>',
-                r'<script[^>]*src[^>]*cdn\.plot\.ly[^>]*></script>'
-            ]
-            
-            for pattern in external_script_patterns:
-                html_content = re.sub(pattern, '', html_content, flags=re.IGNORECASE)
-            
-            # Generate unique ID to prevent conflicts
-            unique_id = f"plotly-chart-{str(uuid.uuid4())[:8]}"
-            
-            # Find and replace div IDs
-            div_patterns = [
-                r'<div[^>]*id="([^"]+)"([^>]*)>',
-                r'<div[^>]*id=\'([^\']+)\'([^>]*)>'
-            ]
-            
-            old_ids = []
-            for pattern in div_patterns:
-                matches = re.finditer(pattern, html_content)
-                for match in matches:
-                    old_id = match.group(1)
-                    old_ids.append(old_id)
-                    # Replace in div tag
-                    html_content = html_content.replace(
-                        f'id="{old_id}"', f'id="{unique_id}"'
-                    ).replace(
-                        f"id='{old_id}'", f"id='{unique_id}'"
-                    )
-            
-            # Replace IDs in script content as well
-            for old_id in old_ids:
-                html_content = html_content.replace(
-                    f'"{old_id}"', f'"{unique_id}"'
-                ).replace(
-                    f"'{old_id}'", f"'{unique_id}'"
-                )
-            
-            # Ensure div has proper CSS class for styling
-            if 'class="plotly-graph-div"' not in html_content:
-                html_content = re.sub(
-                    r'<div([^>]*id="' + unique_id + r'"[^>]*)>',
-                    r'<div\1 class="plotly-graph-div">',
-                    html_content
-                )
-            
-            # Wrap scripts in DOM ready function for better compatibility
-            script_pattern = r'<script[^>]*>(.*?)</script>'
-            scripts = re.findall(script_pattern, html_content, re.DOTALL)
-            
-            if scripts:
-                # Remove old script tags
-                html_content = re.sub(script_pattern, '', html_content, flags=re.DOTALL)
-                
-                # Create new wrapped script
-                wrapped_script = '\n'.join(scripts)
-                if 'Plotly.' in wrapped_script:
-                    # Ensure script runs after DOM is ready
-                    new_script = f'''
-                    <script type="text/javascript">
-                    document.addEventListener('DOMContentLoaded', function() {{
-                        try {{
-                            {wrapped_script}
-                        }} catch (error) {{
-                            console.error('Plotly chart error:', error);
-                            document.getElementById('{unique_id}').innerHTML = '<div class="chart-error">Chart rendering failed: ' + error.message + '</div>';
-                        }}
-                    }});
-                    </script>
-                    '''
-                    html_content += new_script
-            
-            print(f"[HTMLGenerator] Successfully cleaned Plotly HTML, unique ID: {unique_id}")
-            return html_content
-            
-        except Exception as e:
-            print(f"[HTMLGenerator] Error cleaning Plotly HTML: {str(e)}")
-            # Return original content if cleaning fails
-            return html_content
-    
-    def _validate_plotly_html_structure(self, html_content: str) -> bool:
-        """Validate that Plotly HTML has proper structure"""
-        import re
-        
-        try:
-            # Check for essential Plotly components
-            has_div = bool(re.search(r'<div[^>]*class="plotly-graph-div"[^>]*>', html_content) or 
-                          re.search(r'<div[^>]*id="plotly-chart-[^"]*"[^>]*>', html_content))
-            has_script = '<script' in html_content and 'Plotly.' in html_content
-            
-            # Check for basic HTML structure
-            has_proper_tags = '<div' in html_content and '</div>' in html_content
-            
-            # Validate no unclosed tags (basic check)
-            open_divs = len(re.findall(r'<div[^>]*>', html_content))
-            close_divs = len(re.findall(r'</div>', html_content))
-            balanced_divs = abs(open_divs - close_divs) <= 1  # Allow some flexibility
-            
-            print(f"[HTMLGenerator] Plotly validation - div: {has_div}, script: {has_script}, tags: {has_proper_tags}, balanced: {balanced_divs}")
-            
-            return has_div and has_script and has_proper_tags and balanced_divs
-            
-        except Exception as e:
-            print(f"[HTMLGenerator] Error validating Plotly HTML: {str(e)}")
-            return False
-    
-    def _extract_static_from_plotly_html(self, html_content: str, chart_type: str) -> str:
-        """Extract static content from Plotly HTML or create placeholder with enhanced detection"""
-        import re
-        
-        print(f"[HTMLGenerator] Extracting static content from Plotly HTML for {chart_type}")
-        
-        # Look for any embedded base64 images in the HTML (multiple patterns)
-        img_patterns = [
-            r'src=["\'](data:image/[^"\']*)["\']',
-            r'"(data:image/png;base64,[A-Za-z0-9+/=]+)"',
-            r'"(data:image/jpeg;base64,[A-Za-z0-9+/=]+)"',
-            r'"(data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)"'
-        ]
-        
-        for pattern in img_patterns:
-            img_match = re.search(pattern, html_content, re.IGNORECASE)
-            if img_match:
-                img_data = img_match.group(1)
-                print(f"[HTMLGenerator] Found embedded image data in Plotly HTML")
-                return f'''
-                <div style="text-align: center; margin: 20px 0;">
-                    <img src="{img_data}" alt="{chart_type}" 
-                         style="max-width: 100%; height: auto; border: 1px solid #e0e0e0; 
-                                border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" />
-                </div>
-                '''
-        
-        # Look for canvas or svg elements that might contain static content
-        if '<canvas' in html_content or '<svg' in html_content:
-            print(f"[HTMLGenerator] Found canvas/svg content in Plotly HTML")
-            # Extract canvas or svg element
-            canvas_match = re.search(r'(<canvas[^>]*>.*?</canvas>)', html_content, re.DOTALL)
-            svg_match = re.search(r'(<svg[^>]*>.*?</svg>)', html_content, re.DOTALL)
-            
-            if canvas_match:
-                return f'''
-                <div style="text-align: center; margin: 20px 0;">
-                    {canvas_match.group(1)}
-                </div>
-                '''
-            elif svg_match:
-                return f'''
-                <div style="text-align: center; margin: 20px 0;">
-                    {svg_match.group(1)}
-                </div>
-                '''
-        
-        # Check if HTML contains viewport meta tag or other indicators of full HTML document
-        if '<!DOCTYPE' in html_content or '<html' in html_content:
-            # Try to extract just the chart div and relevant scripts
-            div_match = re.search(r'(<div[^>]*plotly[^>]*>.*?</div>)', html_content, re.DOTALL | re.IGNORECASE)
-            if div_match:
-                return self._create_chart_placeholder(f'Static rendering not supported for full HTML document ({chart_type})')
-        
-        # If no static content found, create an informative placeholder
-        print(f"[HTMLGenerator] No static content found in Plotly HTML, creating placeholder")
-        return self._create_chart_placeholder(f'Interactive {chart_type} chart - please view in HTML format for full functionality')
-    
-    def _is_base64_image(self, content: str) -> bool:
-        """Check if content contains base64 image data"""
-        return 'data:image/' in content and 'base64,' in content
-    
-    def _process_base64_image(self, content: str, chart_type: str) -> str:
-        """Process base64 image content"""
-        import re
-        
-        # Extract base64 data URL if it's wrapped in markdown or other format
-        data_url_match = re.search(r'(data:image/[^;]*;base64,[^)"\s]*)', content)
-        if data_url_match:
-            data_url = data_url_match.group(1)
-            return f'''
-            <div style="text-align: center; margin: 20px 0;">
-                <img src="{data_url}" alt="{chart_type}" 
-                     style="max-width: 100%; height: auto; border: 1px solid #e0e0e0; 
-                            border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" />
-            </div>
-            '''
-        
-        # If content starts with data:image/, it's already a data URL
-        if content.startswith('data:image/'):
-            return f'''
-            <div style="text-align: center; margin: 20px 0;">
-                <img src="{content}" alt="{chart_type}" 
-                     style="max-width: 100%; height: auto; border: 1px solid #e0e0e0; 
-                            border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" />
-            </div>
-            '''
-        
-        return self._create_chart_placeholder('Invalid image data')
-    
-    def _process_markdown_image(self, content: str, chart_type: str) -> str:
-        """Process markdown image syntax"""
-        import re
-        
-        # Extract image URL from markdown syntax ![alt](url)
-        img_match = re.search(r'!\[.*?\]\(([^)]+)\)', content)
-        if img_match:
-            img_url = img_match.group(1)
-            if img_url.startswith('data:image/'):
-                return self._process_base64_image(img_url, chart_type)
-            else:
-                return f'<img src="{img_url}" alt="{chart_type}" style="max-width: 100%; height: auto;">'
-        
-        return self._create_chart_placeholder('Invalid markdown image')
-    
-    def _regenerate_chart_from_data(self, data: str, chart_type: str, chart_generator) -> str:
-        """Try to regenerate chart from raw data"""
         import json
-        
-        try:
-            # Try to parse as JSON
-            data_dict = json.loads(data)
-            
-            # Attempt to regenerate based on chart type
-            if chart_type.lower() in ['gantt', 'timeline']:
-                return chart_generator.generate_gantt_chart(data_dict)
-            elif chart_type.lower() in ['budget', 'pie', 'cost']:
-                return chart_generator.create_budget_chart(data_dict)
-            elif chart_type.lower() in ['risk', 'matrix']:
-                return chart_generator.build_risk_matrix(data_dict.get('risks', []))
-            elif chart_type.lower() in ['resource', 'team']:
-                return chart_generator.generate_resource_chart(data_dict)
-            else:
-                # Try generic chart generation with available data
-                if 'categories' in data_dict and 'values' in data_dict:
-                    return chart_generator.create_budget_chart(data_dict)
-                else:
-                    return self._create_chart_placeholder(f'Unsupported chart type: {chart_type}')
-                
-        except json.JSONDecodeError:
-            # If not JSON, treat as plain text but check if it might be HTML
-            if '<' in data and '>' in data:
-                return self._validate_and_clean_chart_html(data)
-            else:
-                return self._create_chart_placeholder(f'Chart data: {data[:100]}...' if len(data) > 100 else data)
-    
-    def _set_chart_output_format(self, format_type):
-        """Set the output format for chart generation tools in current thread"""
-        import threading
-        threading.current_thread()._chart_output_format = format_type
 
-    def _create_chart_placeholder(self, message: str) -> str:
-        """Create a placeholder for charts that can't be processed with improved styling"""
-        # Remove emoji for professional appearance as per project guidelines
-        return f'''
-        <div class="chart-placeholder" style="
-            padding: 30px 20px; 
-            text-align: center; 
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border: 2px dashed #dee2e6; 
-            border-radius: 12px; 
-            color: #6c757d; 
-            margin: 20px 0;
-            font-style: italic;
-            font-size: 14px;
-            line-height: 1.5;
-        ">
-            <div style="font-weight: bold; margin-bottom: 8px; color: #495057;">Chart Placeholder</div>
-            <div>{message}</div>
-        </div>
-        '''
+        # Step 1: Remove code blocks and extract content
+        content = re.sub(r'```json\s*\n?(.*?)\n?```', r'\1', content, flags=re.DOTALL)
+        content = re.sub(r'```\s*\n?(.*?)\n?```', r'\1', content, flags=re.DOTALL)
+
+        # Step 2: Remove agent response artifacts
+        content = re.sub(r'RunResult:\s*\n-\s*Last agent:.*?Agent\(name=.*?\).*?\n', '', content, flags=re.DOTALL)
+        content = re.sub(r'Final output \(str\):\s*\n', '', content, flags=re.DOTALL)
+        content = re.sub(r'- \d+ new item\(s\)\s*\n', '', content, flags=re.DOTALL)
+        content = re.sub(r'- \d+ raw response\(s\)\s*\n', '', content, flags=re.DOTALL)
+        content = re.sub(r'- \d+ input guardrail result\(s\)\s*\n', '', content, flags=re.DOTALL)
+        content = re.sub(r'- \d+ output guardrail result\(s\)\s*\n', '', content, flags=re.DOTALL)
+        content = re.sub(r'\(See `RunResult` for more details\)', '', content, flags=re.DOTALL)
+
+        # Step 3: Try to parse and extract readable content from JSON structures
+        json_block_pattern = r'\{\s*\n\s*"(?:topic|section_title|content)"[^}]*\}'
+        
+        def extract_readable_json(match):
+            json_text = match.group(0)
+            try:
+                parsed = json.loads(json_text)
+                # Extract content from common fields
+                for field in ['content', 'summary', 'text', 'body', 'section_content']:
+                    if field in parsed and isinstance(parsed[field], str):
+                        return parsed[field]
+                
+                # Handle research agent format
+                if 'topic' in parsed and 'summary' in parsed:
+                    parts = []
+                    if parsed.get('summary'):
+                        parts.append(parsed['summary'])
+                    if 'findings' in parsed and isinstance(parsed['findings'], list):
+                        findings = [f['insight'] for f in parsed['findings'] if isinstance(f, dict) and 'insight' in f]
+                        if findings:
+                            parts.extend(findings)
+                    return '\n\n'.join(parts)
+                
+                # If we can't extract specific fields, return original
+                return json_text
+                
+            except json.JSONDecodeError:
+                # If parsing fails, remove the JSON block entirely
+                return ""
+
+        content = re.sub(json_block_pattern, extract_readable_json, content, flags=re.DOTALL)
+
+        # Step 4: Remove remaining JSON artifacts
+        json_patterns = [
+            r'\{\s*\n\s*"[^"]+"\s*:\s*"[^"]*"[^}]*\}',  # Simple JSON objects
+            r'"key_points"\s*:\s*\[[^\]]*\]',  # Key points arrays
+            r'"suggested_visuals"\s*:\s*\[[^\]]*\]',  # Suggested visuals arrays
+            r'"confidence_score"\s*:\s*\d+\.\d+',  # Confidence scores
+            r'"word_count"\s*:\s*\d+',  # Word counts
+            r'"metadata"\s*:\s*\{[^}]*\}',  # Metadata objects
+        ]
+
+        for pattern in json_patterns:
+            content = re.sub(pattern, '', content, flags=re.DOTALL)
+
+        # Step 5: Clean up extra whitespace and newlines
+        content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)  # Reduce multiple newlines
+        content = re.sub(r'^\s+', '', content, flags=re.MULTILINE)  # Remove leading whitespace
+        content = content.strip()
+
+        return content
 
     def _markdown_to_html(self, content: str) -> str:
         """Enhanced markdown to HTML conversion with table support"""
@@ -1031,9 +544,8 @@ class HTMLGenerator:
 
         import re
 
-        # Remove JSON code blocks first
-        content = re.sub(r'```json\s*\n?(.*?)\n?```', r'\1', content, flags=re.DOTALL)
-        content = re.sub(r'```\s*\n?(.*?)\n?```', r'\1', content, flags=re.DOTALL)
+        # Remove JSON artifacts and code blocks first
+        content = self._clean_json_artifacts(content)
 
         html = content
 
@@ -1230,96 +742,6 @@ class HTMLGenerator:
         except Exception:
             return html_content
 
-    def _validate_and_clean_chart_html(self, html_content: str) -> str:
-        """Validate and clean chart HTML content for proper embedding with enhanced validation"""
-        import re
-        import uuid
-        
-        try:
-            print(f"[HTMLGenerator] Validating and cleaning chart HTML, length: {len(html_content)}")
-            
-            # Remove potentially dangerous script content for security
-            if self.output_format == 'interactive':
-                # Remove external Plotly script tags since we include CDN
-                external_patterns = [
-                    r'<script[^>]*src[^>]*plotly[^>]*></script>',
-                    r'<script[^>]*src[^>]*plot\.ly[^>]*></script>',
-                    r'<script[^>]*src[^>]*cdn\.plot\.ly[^>]*></script>'
-                ]
-                for pattern in external_patterns:
-                    html_content = re.sub(pattern, '', html_content, flags=re.IGNORECASE)
-            
-            # Validate HTML structure
-            if not self._is_valid_html_structure(html_content):
-                print(f"[HTMLGenerator] Invalid HTML structure detected")
-                return None
-            
-            # Generate unique ID to prevent conflicts
-            unique_id = f"chart-{str(uuid.uuid4())[:8]}"
-            
-            # Replace all IDs to prevent conflicts
-            id_patterns = [
-                r'id="([^"]+)"',
-                r"id='([^']+)'"
-            ]
-            
-            old_ids = []
-            for pattern in id_patterns:
-                matches = re.finditer(pattern, html_content)
-                for match in matches:
-                    old_id = match.group(1)
-                    if old_id not in old_ids:
-                        old_ids.append(old_id)
-            
-            # Replace all occurrences of old IDs with unique ID
-            for old_id in old_ids:
-                html_content = html_content.replace(f'id="{old_id}"', f'id="{unique_id}"')
-                html_content = html_content.replace(f"id='{old_id}'", f"id='{unique_id}'")
-                # Also replace in JavaScript references
-                html_content = html_content.replace(f'"{old_id}"', f'"{unique_id}"')
-                html_content = html_content.replace(f"'{old_id}'", f"'{unique_id}'")
-            
-            # Ensure proper CSS classes for styling
-            if '<div' in html_content and 'class=' not in html_content:
-                html_content = re.sub(
-                    r'<div([^>]*id="' + unique_id + r'"[^>]*)>',
-                    r'<div\1 class="chart-content">',
-                    html_content
-                )
-            
-            # Wrap standalone content in a container div if needed
-            if not html_content.strip().startswith('<div'):
-                html_content = f'<div class="chart-wrapper" id="{unique_id}">{html_content}</div>'
-            
-            # Add error boundaries for JavaScript execution
-            if '<script' in html_content and 'try' not in html_content:
-                script_pattern = r'<script[^>]*>(.*?)</script>'
-                scripts = re.findall(script_pattern, html_content, re.DOTALL)
-                if scripts:
-                    html_content = re.sub(script_pattern, '', html_content, flags=re.DOTALL)
-                    for script_content in scripts:
-                        if script_content.strip():
-                            wrapped_script = f'''
-                            <script type="text/javascript">
-                            try {{
-                                {script_content}
-                            }} catch (error) {{
-                                console.error('Chart script error:', error);
-                                var element = document.getElementById('{unique_id}');
-                                if (element) {{
-                                    element.innerHTML = '<div class="chart-error">Chart rendering failed: ' + error.message + '</div>';
-                                }}
-                            }}
-                            </script>
-                            '''
-                            html_content += wrapped_script
-            
-            print(f"[HTMLGenerator] Successfully validated and cleaned chart HTML")
-            return html_content
-            
-        except Exception as e:
-            print(f"[HTMLGenerator] Error validating chart HTML: {str(e)}")
-            return f'<div class="chart-error">Chart validation failed: {str(e)}</div>'
     
     def _is_valid_html_structure(self, html_content: str) -> bool:
         """Basic validation of HTML structure"""

@@ -12,21 +12,11 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 
 # Load agent instructions from markdown files
-# def load_instructions(filename: str) -> str:
-#     """Load agent instructions from markdown file"""
-#     try:
-#         path = Path(__file__).parent / filename
-#         with open(path, 'r') as f:
-#             return f.read()
-#     except FileNotFoundError:
-#         return f"Instructions for {filename} not found. Using default instructions for {filename.replace('.md', '')} agent."
-from pathlib import Path
-
 def load_instructions(filename: str) -> str:
     """Load agent instructions from markdown file"""
     try:
         path = Path(__file__).parent / filename
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, 'r') as f:
             return f.read()
     except FileNotFoundError:
         return f"Instructions for {filename} not found. Using default instructions for {filename.replace('.md', '')} agent."
@@ -38,14 +28,14 @@ from tools.proposal_tools import get_rag_context as _original_get_rag_context, f
 
 # Create wrapper for get_rag_context that ensures correct PDF path
 @function_tool
-def get_rag_context(query: str, pdf_path: str = None, max_tokens: int = 2000) -> str:
+def get_rag_context(query: str, pdf_path: str = None, max_completion_tokens: int = 2000) -> str:
     """
     Get RAG context using the correct PDF path from settings
     
     Args:
         query: The query to search for
         pdf_path: PDF path (will be corrected if wrong)
-        max_tokens: Maximum tokens to return
+        max_completion_tokens: Maximum tokens to return
         
     Returns:
         Retrieved context string
@@ -67,14 +57,14 @@ def get_rag_context(query: str, pdf_path: str = None, max_tokens: int = 2000) ->
         # Fallback to provided path
         pass
     
-    return _original_get_rag_context(query, pdf_path, max_tokens)
+    return _original_get_rag_context(query, pdf_path, max_completion_tokens)
 
 # Content Generator Agent
 content_generator_agent = Agent(
     name="ContentGenerator",
     instructions=load_instructions("content_generator.md"),
     tools=[get_rag_context, format_section],
-    model_settings=ModelSettings(model="gpt-4o", temperature=0.3, max_tokens=2000)  # Reduced from 3000 to 2000
+    model_settings=ModelSettings(model="gpt-4o", temperature=0.3, max_completion_tokens=2000)  # Reduced from 3000 to 2000
 )
 
 # Import research tools
@@ -112,7 +102,7 @@ research_agent = Agent(
     model_settings=ModelSettings(
         model="gpt-4o", 
         temperature=0.1, 
-        max_tokens=1500,  # Reduced from 2000 to 1500
+        max_completion_tokens=1500,  # Reduced from 2000 to 1500
         # Additional settings that may help with web browsing
         top_p=0.95,
         frequency_penalty=0.0,
@@ -123,23 +113,35 @@ research_agent = Agent(
 # Import budget tools
 from tools.proposal_tools import calculate_project_costs, generate_timeline
 
-# Budget Calculator Agent
-budget_calculator_agent = Agent(
-    name="BudgetCalculator", 
-    instructions=load_instructions("budget_calculator.md"),
-    tools=[calculate_project_costs, generate_timeline],
-    model_settings=ModelSettings(model="gpt-4o", temperature=0.01, max_tokens=1200)  # Reduced from 2000 to 1200
+# Import chart generation tools
+from tools.proposal_tools import (
+    generate_proposal_charts,
+    create_budget_chart,
+    create_timeline_visualization,
+    create_resource_visualization,
+    extract_chart_data_from_proposal
 )
 
-# Import chart tools
-from tools.proposal_tools import generate_gantt_chart, create_budget_chart, build_risk_matrix
+# Budget Calculator Agent
+budget_calculator_agent = Agent(
+    name="BudgetCalculator",
+    instructions=load_instructions("budget_calculator.md"),
+    tools=[calculate_project_costs, generate_timeline],
+    model_settings=ModelSettings(model="gpt-4o", temperature=0.01, max_completion_tokens=1200)  # Reduced from 2000 to 1200
+)
 
-# Chart Generator Agent - with minimal context requirements
+# Chart Generator Agent
 chart_generator_agent = Agent(
     name="ChartGenerator",
     instructions=load_instructions("chart_generator.md"),
-    tools=[generate_gantt_chart, create_budget_chart, build_risk_matrix],
-    model_settings=ModelSettings(model="gpt-4o", temperature=0.01, max_tokens=500)  # Further reduced to 500 for charts
+    tools=[
+        generate_proposal_charts,
+        create_budget_chart,
+        create_timeline_visualization,
+        create_resource_visualization,
+        extract_chart_data_from_proposal
+    ],
+    model_settings=ModelSettings(model="gpt-4o", temperature=0.1, max_completion_tokens=1500)
 )
 
 # Quality Evaluator Agent
@@ -147,7 +149,7 @@ quality_evaluator_agent = Agent(
     name="QualityEvaluator",
     instructions=load_instructions("quality_evaluator.md"),
     tools=[],  # No tools, just evaluation
-    model_settings=ModelSettings(model="gpt-4o", temperature=0.05, max_tokens=1500)
+    model_settings=ModelSettings(model="gpt-4o", temperature=0.05, max_completion_tokens=1500)
 )
 
 # Import handoff tools
@@ -166,13 +168,15 @@ def transfer_to_budget_calculator():
     """Transfer to budget calculator for cost calculations"""
     return budget_calculator_agent
 
-def transfer_to_chart_generator():
-    """Transfer to chart generator for visual content"""
-    return chart_generator_agent
+
 
 def transfer_to_quality_evaluator():
     """Transfer to quality evaluator for content review"""
     return quality_evaluator_agent
+
+def transfer_to_chart_generator():
+    """Transfer to chart generator for visualization creation"""
+    return chart_generator_agent
 
 # Main Coordinator Agent (Hub in hub-and-spoke pattern)
 coordinator_agent = Agent(
@@ -180,13 +184,13 @@ coordinator_agent = Agent(
     instructions=load_instructions("coordinator.md"),
     tools=[
         analyze_risks,
-        transfer_to_content_generator, 
+        transfer_to_content_generator,
         transfer_to_researcher,
         transfer_to_budget_calculator,
-        transfer_to_chart_generator,
-        transfer_to_quality_evaluator
+        transfer_to_quality_evaluator,
+        transfer_to_chart_generator
     ],
-    model_settings=ModelSettings(model="gpt-4o", temperature=0.1, max_tokens=1500)  # Reduced from 2000 to 1500
+    model_settings=ModelSettings(model="gpt-4o", temperature=0.1, max_completion_tokens=1500)  # Reduced from 2000 to 1500
 )
 
 # ============= AGENT REGISTRY =============
@@ -232,7 +236,7 @@ def get_specialist_for_section(section_name: str, routing_config: Dict) -> Agent
         return budget_calculator_agent
     elif strategy == 'search_based' or strategy == 'research_first':
         return research_agent
-    elif strategy in ['timeline_with_gantt', 'chart_generation']:
+    elif strategy == 'chart_based' or 'charts' in section_name.lower():
         return chart_generator_agent
     else:
         return content_generator_agent
@@ -256,7 +260,7 @@ def get_handoff_function_for_section(section_name: str, routing_config: Dict):
         return transfer_to_budget_calculator
     elif strategy == 'search_based' or strategy == 'research_first':
         return transfer_to_researcher
-    elif strategy in ['timeline_with_gantt', 'chart_generation']:
+    elif strategy == 'chart_based' or 'charts' in section_name.lower():
         return transfer_to_chart_generator
     else:
         return transfer_to_content_generator

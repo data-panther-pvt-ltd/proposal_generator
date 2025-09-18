@@ -14,14 +14,10 @@ from core.docx_exporter import DOCXExporter
 import pandas as pd
 # pandas removed - not used
 import logging
+from utils.config_loader import load_config_with_profile
 
 logger = logging.getLogger(__name__)
-try:
-    import tiktoken
-    TIKTOKEN_AVAILABLE = True
-except ImportError:
-    TIKTOKEN_AVAILABLE = False
-    logger.warning("tiktoken not installed. Using approximate token counting. Install with: pip install tiktoken")
+# tiktoken removed - using exact token counts from API responses
 
 # Import Runner from OpenAI Agents SDK
 from agents import Runner, set_tracing_disabled
@@ -37,8 +33,6 @@ from core.simple_cost_tracker import SimpleCostTracker
 from core.html_generator import HTMLGenerator
 from core.pdf_exporter import PDFExporter
 from core.rag_retriever import RAGRetriever
-from core.chart_decision_agent import ChartDecisionAgent
-from core.chart_generator import ChartGenerator
 from core.rfp_extractor import RFPExtractor
 from utils.data_loader import DataLoader
 from utils.validators import ProposalValidator
@@ -48,45 +42,54 @@ logger = logging.getLogger(__name__)
 
 # Context size limits for different models
 CONTEXT_LIMITS = {
-    'gpt-4o': 128000
+    # GPT-5 series
+    'gpt-5': 200000,
+    'gpt-5-mini': 128000,
+
+    # GPT-4o series
+    'gpt-4o': 128000,
+    'gpt-4o-mini': 128000,
+
+    # Default fallback
+    'default': 128000
 }
+
+def get_context_limit(model: str) -> int:
+    """Get context limit for a given model"""
+    return CONTEXT_LIMITS.get(model, CONTEXT_LIMITS['default'])
 
 # Reserve tokens for response
 RESPONSE_RESERVE_TOKENS = 2000
 
-def count_tokens(text: str, model: str = 'gpt-4o') -> int:
-    """Count tokens in text using tiktoken or fallback estimation"""
+def estimate_tokens(text: str) -> int:
+    """Estimate tokens in text using character count
+    
+    This is a rough estimation used only for truncation purposes.
+    Actual token counts come from API responses.
+    """
     if not text:
         return 0
-        
-    if TIKTOKEN_AVAILABLE:
-        try:
-            encoding = tiktoken.encoding_for_model(model)
-            return len(encoding.encode(text))
-        except Exception as e:
-            logger.warning(f"tiktoken encoding failed: {e}, using fallback")
-    
-    # Fallback: estimate 4 characters per token (conservative estimate)
+    # Rough estimate: 4 characters per token (conservative)
     return len(text) // 4
 
-def truncate_text(text: str, max_tokens: int, model: str = 'gpt-4o') -> str:
+def truncate_text(text: str, max_completion_tokens: int, model: str = 'gpt-4o') -> str:
     """Truncate text to fit within token limit"""
     if not text:
         return text
         
-    current_tokens = count_tokens(text, model)
-    if current_tokens <= max_tokens:
+    current_tokens = estimate_tokens(text)
+    if current_tokens <= max_completion_tokens:
         return text
         
     # Binary search for optimal truncation point
     left, right = 0, len(text)
-    best_text = text[:max_tokens * 4]  # Initial rough estimate
+    best_text = text[:max_completion_tokens * 4]  # Initial rough estimate
     
     while left < right:
         mid = (left + right) // 2
         candidate = text[:mid] + "...[truncated]"
         
-        if count_tokens(candidate, model) <= max_tokens:
+        if estimate_tokens(candidate) <= max_completion_tokens:
             best_text = candidate
             left = mid + 1
         else:
@@ -94,28 +97,7 @@ def truncate_text(text: str, max_tokens: int, model: str = 'gpt-4o') -> str:
             
     return best_text
 
-def prepare_minimal_chart_context(section_name: str, chart_type: str, context: Dict) -> Dict:
-    """Prepare minimal context for chart generation to avoid token limits"""
-    request = context.get('request')
-    
-    # Extract only essential information
-    minimal_context = {
-        'chart_type': chart_type,
-        'section_name': section_name,
-        'project_name': getattr(request, 'project_name', 'Project') if request else 'Project',
-        'timeline': getattr(request, 'timeline', '3 months') if request else '3 months',
-        'budget_range': getattr(request, 'budget_range', None) if request else None,
-        'project_type': getattr(request, 'project_type', 'general') if request else 'general'
-    }
-    
-    # Add minimal section data (first 200 words only)
-    generated_sections = context.get('generated_sections', {})
-    if section_name in generated_sections:
-        content = generated_sections[section_name].get('content', '')
-        words = content.split()[:200]  # First 200 words only
-        minimal_context['section_summary'] = ' '.join(words)
-    
-    return minimal_context
+
 
 @dataclass
 class ProposalRequest:
@@ -151,7 +133,7 @@ class ProposalRunner:
             self.config = self._load_config(config_or_path)
         else:
             self.config = self._load_config("config/settings.yml")
-        self.cost_tracker = cost_tracker or SimpleCostTracker()
+        self.cost_tracker = cost_tracker or SimpleCostTracker(self.config)
         
         # Initialize components
         self.html_generator = HTMLGenerator(self.config, output_format='interactive')
@@ -160,8 +142,8 @@ class ProposalRunner:
         self.docx_exporter = DOCXExporter(self.config)
         self.data_loader = DataLoader(self.config)
         self.validator = ProposalValidator(self.config)
-        self.rag_retriever = RAGRetriever(self.config)
-        self.rfp_extractor = RFPExtractor(self.config)
+        self.rag_retriever = RAGRetriever(self.config, self.cost_tracker)
+        self.rfp_extractor = RFPExtractor(self.config, self.cost_tracker)
         
         # Load data
         self.skills_data = self.data_loader.load_skills_data()
@@ -176,9 +158,7 @@ class ProposalRunner:
         # Cache for vector database to avoid reloading
         self._vector_db_cache = {}
         
-        # Initialize chart generation components
-        self.chart_decision_agent = ChartDecisionAgent(self.config)
-        self.chart_generator = ChartGenerator(output_format='static')
+
         
         logger.info("SDK Proposal Runner initialized successfully")
 
@@ -374,28 +354,27 @@ class ProposalRunner:
             return ""
     
     def _load_config(self, config_path: str) -> Dict:
-        """Load configuration from YAML file"""
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
-    
+        """Load configuration from YAML file with company profile from markdown"""
+        return load_config_with_profile(config_path)
+
     async def generate_proposal(self, request: ProposalRequest) -> Dict[str, Any]:
         """
         Generate a complete proposal using SDK agents
-        
+
         Args:
             request: ProposalRequest object with all requirements
-            
+
         Returns:
             Dictionary containing the generated proposal
         """
         logger.info(f"Starting SDK proposal generation for {request.client_name}")
-        
+
         # Pre-load vector database if PDF is provided
         if hasattr(request, 'requirements') and request.requirements.get('source_pdf'):
             pdf_path = request.requirements['source_pdf']
             logger.info(f"Pre-loading vector database for {pdf_path}")
             self.rag_retriever.process_and_index_pdf(pdf_path)
-        
+
         # Initialize proposal context
         context = {
             "request": request,
@@ -404,15 +383,9 @@ class ProposalRunner:
             "company_profile": self.company_profile,
             "case_studies": self.case_studies,
             "generated_sections": {},
-            "charts": {},
-            "metadata": {
-                "generation_started": datetime.now().isoformat(),
-                "version": "2.0.0-SDK",
-                "total_tokens": 0,
-                "api_cost": 0.0
-            }
+            "metadata": {}
         }
-        
+
         # Get proposal outline from section routing
         outline = list(self.section_routing.keys())
         # If RFP requires a financial proposal, ensure the section exists
@@ -424,10 +397,10 @@ class ProposalRunner:
         except Exception:
             pass
         logger.info(f"Generating {len(outline)} sections using SDK agents")
-        
+
         # Generate sections using coordinator agent
         coordinator = get_agent("coordinator")
-        
+
         try:
             # Initialize session for workflow continuity
             session_context = {
@@ -436,13 +409,13 @@ class ProposalRunner:
                 "company_profile": context['company_profile'],
                 "generated_sections": {}
             }
-            
+
             # Batch sections for parallel execution (3-4 sections at a time)
             batch_size = 3
             for i in range(0, len(outline), batch_size):
                 batch = outline[i:i+batch_size]
                 logger.info(f"Generating batch of sections: {batch}")
-                
+
                 # Create tasks for parallel execution
                 tasks = []
                 section_names = []
@@ -450,17 +423,17 @@ class ProposalRunner:
                     logger.info(f"Creating task for section: {section_name}")
                     # Use handoff method for better agent coordination
                     task = self._generate_section_with_handoff(
-                        section_name, 
-                        context, 
+                        section_name,
+                        context,
                         coordinator
                     )
                     tasks.append(task)
                     section_names.append(section_name)
-                
+
                 # Execute batch in parallel using asyncio.gather
                 try:
                     results = await asyncio.gather(*tasks, return_exceptions=True)
-                    
+
                     # Process results
                     for section_name, result in zip(section_names, results):
                         if isinstance(result, Exception):
@@ -472,11 +445,11 @@ class ProposalRunner:
                         else:
                             context["generated_sections"][section_name] = result
                             session_context["generated_sections"][section_name] = result
-                            
+
                             # Update cost tracking with SDK response
                             if result.get("metadata", {}).get("response"):
                                 response = result["metadata"]["response"]
-                                self.cost_tracker.track_completion(response, model="gpt-4o")
+                                self.cost_tracker.track_completion(response)
                 except Exception as e:
                     logger.error(f"Batch execution failed: {str(e)}")
                     # Add fallback for all sections in batch
@@ -486,27 +459,21 @@ class ProposalRunner:
                                 "content": f"[Section {section_name} - Generation failed]",
                                 "metadata": {"error": str(e), "fallback": True}
                             }
-        
+
         except Exception as e:
             logger.error(f"Error in section generation: {str(e)}", exc_info=True)
             raise
-        
-        # Generate charts only if explicitly enabled in config
-        try:
-            include_charts = self.config.get('output', {}).get('include_charts', False)
-        except Exception:
-            include_charts = False
-        if include_charts:
-            await self._generate_charts(context)
-        
+
+
+
         # Run quality evaluation
         await self._evaluate_quality(context)
-        
+
         # Generate HTML and PDF outputs
         html_content = self.html_generator.generate(context)
         context["html"] = html_content
-        
-      
+
+
         #
         # Update final metadata
         cost_summary = self.cost_tracker.get_summary()
@@ -516,51 +483,12 @@ class ProposalRunner:
             "api_cost": cost_summary["total_cost"],
             "api_calls": cost_summary["api_calls"]
         })
-        
+
         logger.info(f"SDK proposal generation completed. Cost: ${cost_summary['total_cost']:.4f}")
-        
+
         return context
 
-    def create_request_from_rfp(self, pdf_path: str) -> ProposalRequest:
-        """Create ProposalRequest with auto-extracted info from RFP"""
-        rfp_config = self.config.get('rfp', {})
 
-        if rfp_config.get('auto_extract_info', True):
-            # Extract information
-            extracted_info = self.rfp_extractor.extract_rfp_info(pdf_path)
-
-            # Create request with extracted info
-            return ProposalRequest(
-                client_name=extracted_info.get('client_name') or 'Unknown Client',
-                project_name=extracted_info.get('project_name') or 'RFP Project',
-                project_type=extracted_info.get('project_type', 'general'),
-                requirements={
-                    'source_pdf': pdf_path,
-                    'rfp_extracted': extracted_info,
-                    'financial_proposal_required': bool(extracted_info.get('financial_proposal_required', False)),
-                    'evaluation_criteria': extracted_info.get('evaluation_criteria', []),
-                    'language': extracted_info.get('language', 'en'),
-                    'sla_requirements': extracted_info.get('sla_requirements', ''),
-                    'data_residency': extracted_info.get('data_residency', ''),
-                    'team_requirements': extracted_info.get('team_requirements', []),
-                    'required_documents': extracted_info.get('required_documents', [])
-                },
-                timeline=extracted_info.get('timeline', 'As per RFP requirements'),
-                budget_range=extracted_info.get('budget_range', 'As per RFP specifications'),
-                special_requirements=rfp_config.get('special_requirements', [])
-            )
-        else:
-            # Use manual config
-            return ProposalRequest(
-                client_name=rfp_config.get('client_name', 'Unknown Client'),
-                project_name=rfp_config.get('project_name', 'RFP Project'),
-                project_type=rfp_config.get('project_type', 'general'),
-                requirements={'source_pdf': pdf_path},
-                timeline=rfp_config.get('timeline', 'As per RFP requirements'),
-                budget_range=rfp_config.get('budget_range', 'As per RFP specifications'),
-                special_requirements=rfp_config.get('special_requirements', [])
-            )
-    
     async def _generate_section_with_handoff(self, section_name: str, context: Dict, coordinator) -> Dict[str, Any]:
         """Generate a single section using direct specialist agent based on strategy"""
         
@@ -610,10 +538,12 @@ class ProposalRunner:
         prompt = "\n".join(prompt_parts)
         
         # Check and truncate prompt if needed
-        token_count = count_tokens(prompt, 'gpt-4o')
-        if token_count > CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS - 1000:  # Reserve space for context
+        model_used = self.config.get('openai', {}).get('model', 'gpt-4o')
+        context_limit = get_context_limit(model_used)
+        token_count = estimate_tokens(prompt)
+        if token_count > context_limit - RESPONSE_RESERVE_TOKENS - 1000:  # Reserve space for context
             logger.warning(f"Section prompt too long ({token_count} tokens), truncating...")
-            prompt = truncate_text(prompt, CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS - 1000, 'gpt-4o')
+            prompt = truncate_text(prompt, context_limit - RESPONSE_RESERVE_TOKENS - 1000, model_used)
         
         try:
             # Log agent execution start
@@ -642,6 +572,9 @@ class ProposalRunner:
                 context=minimal_section_context,
                 max_turns=6  # Allow more turns to avoid premature termination
             )
+            
+            # Track cost with SDK response
+            self.cost_tracker.track_completion(response)
             
             content = self._extract_content_from_sdk_response(response)
             
@@ -749,7 +682,8 @@ class ProposalRunner:
                     truncated_request[key] = value
             
             # Truncate RAG context
-            truncated_rag_context = truncate_text(rag_context, 2000, 'gpt-4o') if rag_context else ""
+            model_used = self.config.get('openai', {}).get('model', 'gpt-4o')
+            truncated_rag_context = truncate_text(rag_context, 2000, model_used) if rag_context else ""
             
             session_context = {
                 "section_name": section_name,
@@ -773,8 +707,9 @@ class ProposalRunner:
             context_str = str(session_context)
             total_input = full_prompt + context_str
             
-            token_count = count_tokens(total_input, 'gpt-4o')
-            if token_count > CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS:
+            token_count = estimate_tokens(total_input)
+            context_limit = get_context_limit(model_used)
+            if token_count > context_limit - RESPONSE_RESERVE_TOKENS:
                 logger.warning(f"Total context too large ({token_count} tokens), using minimal context...")
                 # Use absolute minimal context
                 session_context = {
@@ -783,7 +718,7 @@ class ProposalRunner:
                     "client": getattr(context['request'], 'client_name', 'Unknown'),
                     "project": getattr(context['request'], 'project_name', 'Unknown')[:100]
                 }
-                section_prompt = truncate_text(section_prompt, CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS - 500, 'gpt-4o')
+                section_prompt = truncate_text(section_prompt, context_limit - RESPONSE_RESERVE_TOKENS - 500, model_used)
             
             # Use SDK Runner to execute coordinator with minimal session management
             response = await Runner.run(
@@ -791,6 +726,9 @@ class ProposalRunner:
                 f"Generate the '{section_name}' section for the proposal. Write ONLY in English.\n\n{section_prompt}",
                 context=session_context
             )
+            
+            # Track cost with SDK response
+            self.cost_tracker.track_completion(response)
             
             # Extract and sanitize content from SDK response
             content = self._extract_content_from_sdk_response(response)
@@ -905,7 +843,7 @@ class ProposalRunner:
                 prompt_parts.append("\nStructured Data Extracted (use this to build concrete, data-driven cases; do not invent):\n" + json.dumps(extracted, indent=2))
                 prompt_parts.append("\nInstructions: Create 2-4 concise case studies using ONLY the partnerships table (client, year, partnership) and the testimonials as supporting quotes where relevant. No conceptual placeholders. If details are missing, write 'Not specified'.")
 
-        # Ensure timelines section includes a proper HTML table (even without charts)
+        # Ensure timelines section includes a proper HTML table
         if section_name.strip().lower() in {"project plan and timelines", "project plan", "timelines"}:
             rfp_timeline = getattr(request, 'timeline', '') or self.config.get('rfp', {}).get('timeline', '')
             if rfp_timeline:
@@ -952,1294 +890,8 @@ class ProposalRunner:
             prompt_parts.append(f"\nAvailable Skills/Resources: {context.get('skills_data', {})}")
         
         return "\n".join(prompt_parts)
-    
-    async def _generate_charts(self, context: Dict):
-        """Generate charts using hybrid approach - ChartDecisionAgent + direct ChartGenerator"""
-        logger.info("Starting hybrid chart generation")
-        
-        try:
-            # Check if SDK agent should be used
-            use_sdk_agent = self.config.get('charts', {}).get('use_sdk_agent', False)
-            
-            if use_sdk_agent:
-                logger.info("Using legacy SDK agent approach for chart generation")
-                await self._generate_charts_legacy_sdk(context)
-            else:
-                logger.info("Using hybrid approach: ChartDecisionAgent + direct ChartGenerator")
-                await self._generate_charts_hybrid(context)
-                
-        except Exception as e:
-            logger.error(f"Chart generation failed: {str(e)}")
-            # Ensure charts dict exists even on failure
-            if "charts" not in context:
-                context["charts"] = {}
-    
-    async def _generate_charts_hybrid(self, context: Dict):
-        """Generate charts using hybrid approach with ChartDecisionAgent and direct ChartGenerator"""
-        generated_sections = context.get('generated_sections', {})
-        
-        # Step 1: Create section summaries for decision agent (minimal context)
-        section_summaries = {}
-        for section_name, section_data in generated_sections.items():
-            content = section_data.get('content', '')
-            # Extract only first 100 words as summary to minimize context
-            words = content.split()[:100]
-            summary = ' '.join(words) + '...' if len(words) == 100 else ' '.join(words)
-            section_summaries[section_name] = summary
-        
-        # Step 2: Use ChartDecisionAgent to decide which charts to generate
-        request = context.get('request')
-        project_type = getattr(request, 'project_type', 'general') if request else 'general'
-        
-        try:
-            chart_decisions = self.chart_decision_agent.decide_charts(
-                section_summaries, 
-                project_type
-            )
-            logger.info(f"Chart decision agent selected {len(chart_decisions)} charts")
-        except Exception as e:
-            logger.warning(f"Chart decision agent failed, using minimum required charts: {str(e)}")
-            # Fallback to minimum required charts from config
-            chart_decisions = []
-            for min_chart in self.config.get('charts', {}).get('minimum_charts', []):
-                chart_decisions.append({
-                    'section': min_chart['section'],
-                    'type': min_chart['type'], 
-                    'title': min_chart['title'],
-                    'required': True
-                })
-        
-        # Step 3: Generate each chart directly using ChartGenerator
-        for chart_spec in chart_decisions:
-            section_name = chart_spec['section']
-            chart_type = chart_spec['type']
-            chart_title = chart_spec['title']
-            
-            logger.info(f"Generating {chart_type} chart for {section_name}")
-            
-            try:
-                # Log chart generation start
-                agent_logger.log_agent_execution(
-                    'hybrid_chart_generator',
-                    f"generate_chart_{section_name}",
-                    {"section_name": section_name, "chart_type": chart_type},
-                    {"status": "starting", "approach": "hybrid"}
-                )
-                
-                # Generate chart directly
-                chart_html = await self._generate_chart_direct(
-                    chart_spec, 
-                    context
-                )
-                
-                if chart_html:
-                    context["charts"][section_name] = {
-                        "type": chart_type,
-                        "data": chart_html,
-                        "title": chart_title,
-                        "generated_at": datetime.now().isoformat(),
-                        "method": "hybrid_direct",
-                        "html_length": len(chart_html)
-                    }
-                    
-                    # Log successful chart generation
-                    agent_logger.log_agent_execution(
-                        'hybrid_chart_generator',
-                        f"generate_chart_{section_name}",
-                        {"section_name": section_name, "chart_type": chart_type},
-                        {"status": "success", "method": "hybrid_direct"}
-                    )
-                else:
-                    logger.warning(f"No chart HTML generated for {section_name}")
-                    
-            except Exception as e:
-                logger.error(f"Failed to generate chart for {section_name}: {str(e)}")
-                # Log chart generation failure
-                agent_logger.log_agent_execution(
-                    'hybrid_chart_generator',
-                    f"generate_chart_{section_name}",
-                    {"section_name": section_name, "chart_type": chart_type},
-                    {"status": "error", "error": str(e), "method": "hybrid_direct"}
-                )
-                
-                # Add fallback placeholder chart
-                context["charts"][section_name] = {
-                    "type": chart_type,
-                    "data": f"<div>Chart generation failed for {section_name} ({chart_type})</div>",
-                    "title": chart_title,
-                    "generated_at": datetime.now().isoformat(),
-                    "error": str(e),
-                    "method": "hybrid_fallback"
-                }
-    
-    def _prepare_chart_data(self, section_name: str, chart_type: str, context: Dict) -> str:
-        """
-        Prepare chart data based on section content and chart type
-        
-        Args:
-            section_name: Name of the section requiring chart
-            chart_type: Type of chart (gantt, budget_breakdown, risk_matrix)
-            context: Full context with generated sections
-            
-        Returns:
-            JSON string formatted for the specific chart type
-        """
-        generated_sections = context.get('generated_sections', {})
-        request = context.get('request')
-        
-        try:
-            if chart_type == 'gantt':
-                # Extract timeline data from Project Plan or Technical Approach sections
-                timeline_content = ""
-                for section in ['Project Plan', 'Technical Approach', 'Project Scope']:
-                    if section in generated_sections:
-                        timeline_content += generated_sections[section].get('content', '')
-                
-                # Parse timeline from request
-                timeline = getattr(request, 'timeline', '3 months') if request else '3 months'
-                
-                # Extract duration in months
-                duration_months = 3
-                try:
-                    import re
-                    match = re.search(r'(\d+)', timeline)
-                    if match:
-                        duration_months = int(match.group(1))
-                except:
-                    pass
-                
-                # Look for phases/milestones in content
-                phases = []
-                if 'phase' in timeline_content.lower() or 'milestone' in timeline_content.lower():
-                    # Try to extract phases from content
-                    phase_patterns = [
-                        r'phase\s+(\d+)[:\-\s]*([^.!?]*)',
-                        r'milestone[:\-\s]*([^.!?]*)',
-                        r'(\d+[\.\)]\s*[^.!?]*(?:phase|milestone|stage)[^.!?]*)',
-                    ]
-                    
-                    for pattern in phase_patterns:
-                        matches = re.findall(pattern, timeline_content, re.IGNORECASE)
-                        for match in matches[:5]:  # Limit to 5 phases
-                            if isinstance(match, tuple):
-                                phases.append({
-                                    'name': match[1].strip() if len(match) > 1 else match[0].strip(),
-                                    'duration': max(1, duration_months // 4)
-                                })
-                            else:
-                                phases.append({
-                                    'name': match.strip(),
-                                    'duration': max(1, duration_months // 4)
-                                })
-                
-                # Default phases if none extracted
-                if not phases:
-                    phase_duration = max(1, duration_months // 4)
-                    phases = [
-                        {'name': 'Requirements & Planning', 'duration': phase_duration},
-                        {'name': 'Development & Implementation', 'duration': phase_duration * 2},
-                        {'name': 'Testing & Quality Assurance', 'duration': phase_duration},
-                        {'name': 'Deployment & Delivery', 'duration': phase_duration}
-                    ]
-                
-                # Calculate start times
-                current_start = 0
-                for phase in phases:
-                    phase['start'] = current_start
-                    current_start += phase['duration']
-                
-                chart_data = {
-                    'type': 'gantt',
-                    'title': f'Project Timeline - {request.project_name if request else "Project"}',
-                    'timeline': timeline,
-                    'duration_months': duration_months,
-                    'phases': phases
-                }
-                
-            elif chart_type == 'budget_breakdown':
-                # Extract budget data from Budget section
-                budget_content = generated_sections.get('Budget', {}).get('content', '')
-                budget_range = getattr(request, 'budget_range', None) if request else None
-                
-                # Default budget breakdown
-                budget_items = []
-                
-                # Try to extract budget items from content
-                if budget_content:
-                    # Look for cost patterns in content
-                    cost_patterns = [
-                        r'(\$[\d,]+(?:\.\d{2})?)[^\w]*([^.!?\n]{1,50})',
-                        r'([^.!?\n]{1,50})[^\w]*(\$[\d,]+(?:\.\d{2})?)',
-                        r'(\w+(?:\s+\w+)*)[:\-\s]*(\$[\d,]+(?:\.\d{2})?)',
-                        r'(\$[\d,]+(?:\.\d{2})?)[:\-\s]*(\w+(?:\s+\w+)*)'
-                    ]
-                    
-                    for pattern in cost_patterns:
-                        matches = re.findall(pattern, budget_content)
-                        for match in matches[:6]:  # Limit to 6 items
-                            if '$' in match[0]:
-                                amount_str = match[0].replace('$', '').replace(',', '')
-                                try:
-                                    amount = float(amount_str)
-                                    budget_items.append({
-                                        'category': match[1].strip(),
-                                        'amount': amount
-                                    })
-                                except ValueError:
-                                    continue
-                            elif '$' in match[1]:
-                                amount_str = match[1].replace('$', '').replace(',', '')
-                                try:
-                                    amount = float(amount_str)
-                                    budget_items.append({
-                                        'category': match[0].strip(),
-                                        'amount': amount
-                                    })
-                                except ValueError:
-                                    continue
-                
-                # Default budget breakdown if none extracted
-                if not budget_items:
-                    total_budget = 100000  # Default
-                    if budget_range:
-                        # Try to extract number from budget range
-                        try:
-                            budget_match = re.search(r'(\d+(?:,\d+)*)', budget_range)
-                            if budget_match:
-                                total_budget = float(budget_match.group(1).replace(',', ''))
-                        except:
-                            pass
-                    
-                    budget_items = [
-                        {'category': 'Development & Implementation', 'amount': total_budget * 0.40},
-                        {'category': 'Project Management', 'amount': total_budget * 0.15},
-                        {'category': 'Testing & QA', 'amount': total_budget * 0.20},
-                        {'category': 'Infrastructure & Tools', 'amount': total_budget * 0.10},
-                        {'category': 'Documentation & Training', 'amount': total_budget * 0.10},
-                        {'category': 'Contingency', 'amount': total_budget * 0.05}
-                    ]
-                
-                chart_data = {
-                    'type': 'budget_breakdown',
-                    'title': 'Project Budget Breakdown',
-                    'budget_items': budget_items,
-                    'total_budget': sum(item['amount'] for item in budget_items)
-                }
-                
-            elif chart_type == 'risk_matrix':
-                # Extract risk data from Risk Analysis section
-                risk_content = generated_sections.get('Risk Analysis', {}).get('content', '')
-                
-                risks = []
-                
-                # Try to extract risks from content
-                if risk_content:
-                    # Look for risk patterns
-                    risk_patterns = [
-                        r'((?:risk|threat|issue)[^.!?\n]{1,100})',
-                        r'(\d+[\.\)]\s*[^.!?\n]{1,100}(?:risk|threat|issue)[^.!?\n]*)',
-                        r'([A-Z][^.!?\n]{1,100}(?:Risk|Threat|Issue))'
-                    ]
-                    
-                    risk_categories = ['technical', 'schedule', 'resource', 'financial', 'operational']
-                    
-                    for pattern in risk_patterns:
 
-                        matches = re.findall(pattern, risk_content, re.IGNORECASE)
-                        for i, match in enumerate(matches[:8]):  # Limit to 8 risks
-                            # Assign probability and impact based on keywords
-                            risk_text = match.lower() if isinstance(match, str) else str(match).lower()
-                            
-                            # Determine probability (0.1 to 0.9)
-                            if any(word in risk_text for word in ['high', 'likely', 'probable', 'common']):
-                                probability = 0.7 + (i % 3) * 0.1
-                            elif any(word in risk_text for word in ['medium', 'possible', 'moderate']):
-                                probability = 0.4 + (i % 3) * 0.1
-                            else:
-                                probability = 0.2 + (i % 3) * 0.1
-                            
-                            # Determine impact (0.1 to 0.9)
-                            if any(word in risk_text for word in ['critical', 'major', 'severe', 'significant']):
-                                impact = 0.7 + (i % 3) * 0.1
-                            elif any(word in risk_text for word in ['medium', 'moderate', 'important']):
-                                impact = 0.4 + (i % 3) * 0.1
-                            else:
-                                impact = 0.2 + (i % 3) * 0.1
-                            
-                            # Determine category
-                            category = 'technical'  # default
-                            if any(word in risk_text for word in ['schedule', 'timeline', 'delay', 'time']):
-                                category = 'schedule'
-                            elif any(word in risk_text for word in ['resource', 'staff', 'team', 'personnel']):
-                                category = 'resource'
-                            elif any(word in risk_text for word in ['budget', 'cost', 'financial', 'money']):
-                                category = 'financial'
-                            elif any(word in risk_text for word in ['operational', 'process', 'workflow']):
-                                category = 'operational'
-                            
-                            risks.append({
-                                'name': match.strip()[:50] + ('...' if len(match.strip()) > 50 else ''),
-                                'probability': min(0.9, max(0.1, probability)),
-                                'impact': min(0.9, max(0.1, impact)),
-                                'category': category
-                            })
-                
-                # Default risks if none extracted
-                if not risks:
-                    risks = [
-                        {'name': 'Technical Integration Risk', 'probability': 0.3, 'impact': 0.7, 'category': 'technical'},
-                        {'name': 'Timeline Delays', 'probability': 0.4, 'impact': 0.6, 'category': 'schedule'},
-                        {'name': 'Resource Availability', 'probability': 0.2, 'impact': 0.8, 'category': 'resource'},
-                        {'name': 'Requirements Changes', 'probability': 0.5, 'impact': 0.5, 'category': 'technical'},
-                        {'name': 'Budget Overrun', 'probability': 0.2, 'impact': 0.9, 'category': 'financial'}
-                    ]
-                
-                chart_data = {
-                    'type': 'risk_matrix',
-                    'title': 'Risk Assessment Matrix',
-                    'risks': risks
-                }
-            
-            else:
-                # Default chart data for unknown types
-                chart_data = {
-                    'type': chart_type,
-                    'title': f'{section_name} Chart',
-                    'data': 'No specific data structure defined for this chart type'
-                }
-            
-            # Return JSON string
-            return json.dumps(chart_data, indent=2)
-            
-        except Exception as e:
-            logger.error(f"Error preparing chart data for {section_name} ({chart_type}): {str(e)}")
-            # Return minimal fallback data
-            return json.dumps({
-                'type': chart_type,
-                'title': f'{section_name} Chart',
-                'error': f'Data preparation failed: {str(e)}'
-            }, indent=2)
-    
-    def _prepare_minimal_chart_data(self, section_name: str, chart_type: str, context: Dict) -> Dict:
-        """
-        Prepare minimal chart data without full section content to reduce context size
-        
-        Args:
-            section_name: Name of the section requiring chart
-            chart_type: Type of chart (gantt, budget_breakdown, risk_matrix)
-            context: Full context with generated sections
-            
-        Returns:
-            Dictionary with minimal essential chart data
-        """
-        request = context.get('request')
-        
-        try:
-            if chart_type == 'gantt':
-                # Use only timeline from request, create default phases
-                timeline = getattr(request, 'timeline', '3 months') if request else '3 months'
-                
-                # Extract duration in months
-                duration_months = 3
-                try:
-                    import re
-                    match = re.search(r'(\d+)', timeline)
-                    if match:
-                        duration_months = int(match.group(1))
-                except:
-                    pass
-                
-                # Create default phases based on project type
-                phase_duration = max(1, duration_months // 4)
-                phases = [
-                    {'name': 'Requirements & Planning', 'duration': phase_duration, 'start': 0},
-                    {'name': 'Development & Implementation', 'duration': phase_duration * 2, 'start': phase_duration},
-                    {'name': 'Testing & Quality Assurance', 'duration': phase_duration, 'start': phase_duration * 3},
-                    {'name': 'Deployment & Delivery', 'duration': phase_duration, 'start': phase_duration * 4}
-                ]
-                
-                return {
-                    'type': 'gantt',
-                    'title': f'Project Timeline - {request.project_name if request else "Project"}',
-                    'timeline': timeline,
-                    'duration_months': duration_months,
-                    'phases': phases
-                }
-                
-            elif chart_type == 'budget_breakdown':
-                # Use budget range from request if available
-                budget_range = getattr(request, 'budget_range', None) if request else None
-                
-                # Default total budget
-                total_budget = 100000
-                if budget_range:
-                    try:
-                        import re
-                        budget_match = re.search(r'(\d+(?:,\d+)*)', budget_range)
-                        if budget_match:
-                            total_budget = float(budget_match.group(1).replace(',', ''))
-                    except:
-                        pass
-                
-                # Create standard budget breakdown
-                budget_items = [
-                    {'category': 'Development & Implementation', 'amount': total_budget * 0.40},
-                    {'category': 'Project Management', 'amount': total_budget * 0.15},
-                    {'category': 'Testing & QA', 'amount': total_budget * 0.20},
-                    {'category': 'Infrastructure & Tools', 'amount': total_budget * 0.10},
-                    {'category': 'Documentation & Training', 'amount': total_budget * 0.10},
-                    {'category': 'Contingency', 'amount': total_budget * 0.05}
-                ]
-                
-                return {
-                    'type': 'budget_breakdown',
-                    'title': 'Project Budget Breakdown',
-                    'budget_items': budget_items,
-                    'total_budget': total_budget
-                }
-                
-            elif chart_type == 'risk_matrix':
-                # Create standard project risks without parsing section content
-                risks = [
-                    {'name': 'Technical Integration Risk', 'probability': 0.3, 'impact': 0.7, 'category': 'technical'},
-                    {'name': 'Timeline Delays', 'probability': 0.4, 'impact': 0.6, 'category': 'schedule'},
-                    {'name': 'Resource Availability', 'probability': 0.2, 'impact': 0.8, 'category': 'resource'},
-                    {'name': 'Requirements Changes', 'probability': 0.5, 'impact': 0.5, 'category': 'technical'},
-                    {'name': 'Budget Overrun', 'probability': 0.2, 'impact': 0.9, 'category': 'financial'}
-                ]
-                
-                return {
-                    'type': 'risk_matrix',
-                    'title': 'Risk Assessment Matrix',
-                    'risks': risks
-                }
-            
-            else:
-                # Default minimal chart data
-                return {
-                    'type': chart_type,
-                    'title': f'{section_name} Chart',
-                    'message': f'Standard {chart_type} visualization'
-                }
-            
-        except Exception as e:
-            logger.error(f"Error preparing minimal chart data for {section_name} ({chart_type}): {str(e)}")
-            # Return minimal fallback data
-            return {
-                'type': chart_type,
-                'title': f'{section_name} Chart',
-                'error': f'Data preparation failed: {str(e)}'
-            }
-    
-    def _extract_chart_html_from_response(self, response) -> str:
-        """
-        Extract HTML chart content from SDK response, specifically handling chart generation
-        
-        Args:
-            response: SDK response from chart generation agent
-            
-        Returns:
-            String containing the HTML chart content
-        """
-        try:
-            # First, try the standard content extraction
-            raw_content = self._extract_content_from_sdk_response(response)
-            
-            if not raw_content:
-                return ""
-            
-            # Look for HTML content specifically
-            html_patterns = [
-                # HTML code blocks in markdown
-                r'```html\s*\n?(.*?)\n?```',
-                r'```\s*\n?(<!DOCTYPE html.*?</html>)\s*\n?```',
-                r'```\s*\n?(<html.*?</html>)\s*\n?```',
-                r'```\s*\n?(<div.*?</div>)\s*\n?```',
-                # HTML without code blocks
-                r'(<!DOCTYPE html.*?</html>)',
-                r'(<html.*?</html>)',
-                # More flexible div matching for charts
-                r'(<div[^>]*class[^>]*chart[^>]*>.*?</div>)',
-                r'(<div[^>]*>.*?</div>)',
-                # Plotly specific patterns
-                r'(<div[^>]*id=["\'][^"\']*plotly[^"\']*["\'][^>]*>.*?</div>)',
-                r'(<div[^>]*>.*?Plotly\.newPlot.*?</script>.*?</div>)',
-                # Base64 image patterns
-                r'(<img[^>]*src="data:image/[^"]*"[^>]*>)',
-                # Any HTML-like structure
-                r'(<[^>]+>.*?</[^>]+>)',
-            ]
-            
-            for pattern in html_patterns:
-                matches = re.findall(pattern, raw_content, re.DOTALL | re.IGNORECASE)
-                if matches:
-                    html_content = matches[0]
-                    # Clean up the HTML
-                    html_content = html_content.strip()
-                    
-                    # Basic validation - ensure it looks like HTML
-                    if '<' in html_content and '>' in html_content:
-                        # Additional validation for chart content
-                        if self._is_valid_chart_html(html_content):
-                            logger.debug(f"Extracted valid chart HTML content: {len(html_content)} characters")
-                            return html_content
-                        elif len(html_content) > 50:  # Reasonable length even if not perfectly valid
-                            logger.debug(f"Extracted HTML content (may need cleaning): {len(html_content)} characters")
-                            return html_content
-            
-            # If no HTML pattern found, check if the raw content itself is HTML
-            if raw_content.strip().startswith('<') and raw_content.strip().endswith('>'):
-                return raw_content.strip()
-            
-            # Check if content contains HTML-like structures
-            if any(tag in raw_content.lower() for tag in ['<html', '<div', '<script', 'plotly']):
-                # Try to extract the largest HTML-like block
-                html_start = raw_content.find('<')
-                html_end = raw_content.rfind('>') + 1
-                
-                if html_start != -1 and html_end > html_start:
-                    potential_html = raw_content[html_start:html_end]
-                    if len(potential_html) > 50:  # Reasonable HTML content
-                        return potential_html
-            
-            # Fallback - return raw content if it contains some HTML indicators
-            if any(indicator in raw_content.lower() for indicator in ['plotly', 'chart', 'svg', 'canvas']):
-                return raw_content
-            
-            # Last resort - wrap content in a div if it might be chart-related
-            if any(keyword in raw_content.lower() for keyword in ['error', 'chart', 'data', 'visualization']):
-                return f"<div>{raw_content}</div>"
-            
-            return raw_content
-            
-        except Exception as e:
-            logger.error(f"Error extracting chart HTML from response: {str(e)}")
-            return ""
-    
-    def _is_valid_chart_html(self, html_content: str) -> bool:
-        """Check if HTML content appears to be a valid chart"""
-        chart_indicators = [
-            'plotly', 'chart', 'svg', 'canvas', 'graph',
-            'data:image/', 'visualization', 'figure',
-            'Plotly.newPlot', 'plotly-graph-div'
-        ]
-        content_lower = html_content.lower()
-        return any(indicator in content_lower for indicator in chart_indicators)
-    
-    def _set_chart_output_format(self, format_type):
-        """Set the output format for chart generation tools in current thread"""
-        import threading
-        threading.current_thread()._chart_output_format = format_type
-    
-    async def _generate_chart_direct(self, chart_spec: Dict[str, Any], context: Dict) -> str:
-        """Generate a chart directly using ChartGenerator class"""
-        chart_type = chart_spec['type']
-        section_name = chart_spec['section']
-        
-        try:
-            # Extract relevant data from section content
-            chart_data = self._extract_chart_data_from_section(
-                section_name, 
-                chart_type, 
-                context
-            )
-            
-            # Generate chart using direct ChartGenerator methods
-            if chart_type == 'gantt':
-                return self.chart_generator.generate_gantt_chart(chart_data)
-            elif chart_type == 'budget_breakdown':
-                return self.chart_generator.create_budget_chart(chart_data)
-            elif chart_type == 'risk_matrix':
-                return self.chart_generator.build_risk_matrix(chart_data.get('risks', []))
-            elif chart_type == 'bar':
-                return self.chart_generator.generate_bar_chart(chart_data)
-            elif chart_type == 'pie':
-                return self.chart_generator.generate_pie_chart(chart_data)
-            elif chart_type == 'line':
-                return self.chart_generator.generate_line_chart(chart_data)
-            else:
-                logger.warning(f"Unsupported chart type: {chart_type}")
-                return f"<div>Unsupported chart type: {chart_type}</div>"
-                
-        except Exception as e:
-            logger.error(f"Direct chart generation failed for {section_name}: {str(e)}")
-            return f"<div>Chart generation error: {str(e)}</div>"
-    
-    def _extract_chart_data_from_section(self, section_name: str, chart_type: str, context: Dict) -> Dict[str, Any]:
-        """Extract minimal chart data from section content using smart extractors"""
-        generated_sections = context.get('generated_sections', {})
-        section_data = generated_sections.get(section_name, {})
-        section_content = section_data.get('content', '')
-        request = context.get('request')
-        
-        try:
-            if chart_type == 'gantt':
-                return self._extract_gantt_data(section_content, request)
-            elif chart_type == 'budget_breakdown': 
-                return self._extract_budget_data(section_content, request)
-            elif chart_type == 'risk_matrix':
-                return self._extract_risk_data(section_content, request)
-            elif chart_type == 'bar':
-                return self._extract_bar_chart_data(section_content, section_name)
-            elif chart_type == 'pie':
-                return self._extract_pie_chart_data(section_content, section_name)
-            elif chart_type == 'line':
-                return self._extract_line_chart_data(section_content, section_name, request)
-            else:
-                return {'title': f'{section_name} Chart', 'data': {}}
-                
-        except Exception as e:
-            logger.error(f"Data extraction failed for {section_name}: {str(e)}")
-            return {'title': f'{section_name} Chart', 'error': str(e)}
-    
-    def _extract_gantt_data(self, content: str, request) -> Dict[str, Any]:
-        """Extract timeline data for Gantt chart"""
-        # Get timeline from request
-        timeline = getattr(request, 'timeline', '3 months') if request else '3 months'
-        project_name = getattr(request, 'project_name', 'Project') if request else 'Project'
-        
-        # Extract duration in weeks (prefer explicit weeks; fallback to months * 4)
-        duration_weeks = 12
-        try:
-            import re as _re
-            def _normalize_digits(s: str) -> str:
-                trans = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
-                return s.translate(trans)
-            tl = _normalize_digits(timeline or '')
-            mw = _re.search(r'(\d+)\s*(weeks?|week)', tl, _re.IGNORECASE)
-            if mw:
-                duration_weeks = int(mw.group(1))
-            else:
-                mm = _re.search(r'(\d+)', tl)
-                if mm:
-                    duration_weeks = int(mm.group(1)) * 4
-        except Exception:
-            pass
-        
-        # Look for phases in content using regex
-        phases = []
-        content_lower = content.lower()
-        
-        if 'phase' in content_lower or 'milestone' in content_lower or 'stage' in content_lower:
-            # Try to extract phases from content
-            phase_patterns = [
-                r'phase\s+(\d+)[:\-\s]*([^.!?\n]{1,80})',
-                r'milestone[:\-\s]*([^.!?\n]{1,80})',
-                r'(\d+[\.)\s]*[^.!?\n]*(?:phase|milestone|stage)[^.!?\n]{0,50})',
-                r'([A-Z][^.!?\n]{1,80}(?:phase|stage|milestone))',
-            ]
-            
-            phase_duration = max(1, duration_weeks // 4)
-            for pattern in phase_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                for i, match in enumerate(matches[:5]):  # Limit to 5 phases
-                    if isinstance(match, tuple):
-                        phase_name = match[1].strip() if len(match) > 1 else match[0].strip()
-                    else:
-                        phase_name = match.strip()
-                        
-                    # Clean up phase name
-                    phase_name = re.sub(r'^\d+[\.)\s]*', '', phase_name)
-                    phase_name = phase_name.strip()[:50]  # Limit length
-                    
-                    if phase_name and len(phase_name) > 3:
-                        phases.append({
-                            'name': phase_name,
-                            'duration': phase_duration,
-                            'start': i * phase_duration
-                        })
-                
-                if phases:
-                    break  # Use first successful pattern
-        
-        # Default phases if none extracted: split total weeks by weights 20%/50%/20%/10%
-        if not phases:
-            total_weeks = max(4, int(duration_weeks))
-            p1 = max(1, round(total_weeks * 0.2))
-            p2 = max(1, round(total_weeks * 0.5))
-            p3 = max(1, round(total_weeks * 0.2))
-            # Ensure sum equals total
-            p4 = max(1, total_weeks - (p1 + p2 + p3))
-            starts = [0, p1, p1 + p2, p1 + p2 + p3]
-            phases = [
-                {'name': 'Requirements & Planning', 'duration': p1, 'start': starts[0]},
-                {'name': 'Development & Implementation', 'duration': p2, 'start': starts[1]},
-                {'name': 'Testing & Quality Assurance', 'duration': p3, 'start': starts[2]},
-                {'name': 'Deployment & Delivery', 'duration': p4, 'start': starts[3]}
-            ]
-        
-        # Try to derive a start date from request (requirements.start_date or timeline text)
-        start_date_iso = None
-        try:
-            import re
-            from datetime import datetime
-            # 1) explicit field
-            req = getattr(request, 'requirements', {}) or {}
-            candidate = req.get('start_date') or timeline
-            # Try multiple formats
-            date_formats = ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%b %Y', '%B %Y']
-            parsed = None
-            for fmt in date_formats:
-                try:
-                    parsed = datetime.strptime(candidate.strip(), fmt)
-                    break
-                except Exception:
-                    continue
-            if not parsed:
-                # Search for Month YYYY pattern
-                m = re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})', candidate, re.IGNORECASE)
-                if m:
-                    try:
-                        parsed = datetime.strptime(f"{m.group(1)[:3].title()} {m.group(2)}", '%b %Y')
-                    except Exception:
-                        parsed = None
-            if parsed:
-                start_date_iso = parsed.date().isoformat()
-        except Exception:
-            start_date_iso = None
 
-        return {
-            'title': f'Project Timeline - {project_name}',
-            'timeline': timeline,
-            'duration_weeks': duration_weeks,
-            'phases': phases,
-            'start_date': start_date_iso
-        }
-    
-    def _extract_budget_data(self, content: str, request) -> Dict[str, Any]:
-        """Extract budget data for budget breakdown chart"""
-        budget_range = getattr(request, 'budget_range', None) if request else None
-        
-        # Try to extract budget items from content
-        budget_items = {}
-        
-        # Look for cost patterns in content
-        cost_patterns = [
-            r'(\$[\d,]+(?:\.\d{2})?)[^\w]*([^.!?\n]{1,50})',
-            r'([^.!?\n]{1,50})[^\w]*(\$[\d,]+(?:\.\d{2})?)',
-            r'(\w+(?:\s+\w+)*)[:\-\s]*(\$[\d,]+(?:\.\d{2})?)',
-        ]
-        
-        for pattern in cost_patterns:
-            matches = re.findall(pattern, content)
-            for match in matches[:6]:  # Limit to 6 items
-                if '$' in match[0]:
-                    amount_str = match[0].replace('$', '').replace(',', '')
-                    category = match[1].strip()[:30]  # Limit category name
-                elif '$' in match[1]:
-                    amount_str = match[1].replace('$', '').replace(',', '')
-                    category = match[0].strip()[:30]
-                else:
-                    continue
-                    
-                try:
-                    amount = float(amount_str)
-                    if category and amount > 0:
-                        budget_items[category] = amount
-                except ValueError:
-                    continue
-        
-        # Default budget breakdown if none extracted
-        if not budget_items:
-            total_budget = 100000  # Default
-            if budget_range:
-                try:
-                    budget_match = re.search(r'(\d+(?:,\d+)*)', budget_range)
-                    if budget_match:
-                        total_budget = float(budget_match.group(1).replace(',', ''))
-                except:
-                    pass
-            
-            budget_items = {
-                'Development & Implementation': total_budget * 0.40,
-                'Project Management': total_budget * 0.15,
-                'Testing & QA': total_budget * 0.20,
-                'Infrastructure & Tools': total_budget * 0.10,
-                'Documentation & Training': total_budget * 0.10,
-                'Contingency': total_budget * 0.05
-            }
-        
-        return {
-            'breakdown_by_role': budget_items,
-            'total_cost': sum(budget_items.values()),
-            'categories': list(budget_items.keys()),
-            'values': list(budget_items.values())
-        }
-    
-    def _extract_risk_data(self, content: str, request) -> Dict[str, Any]:
-        """Extract risk data for risk matrix chart"""
-        risks = []
-        
-        # Look for risks in content
-        content_lower = content.lower()
-        
-        if 'risk' in content_lower or 'threat' in content_lower:
-            # Risk extraction patterns
-            risk_patterns = [
-                r'((?:risk|threat|issue)[^.!?\n]{1,100})',
-                r'(\d+[\.)\s]*[^.!?\n]{1,100}(?:risk|threat|issue)[^.!?\n]*)',
-                r'([A-Z][^.!?\n]{1,100}(?:Risk|Threat|Issue))',
-                r'([^.!?\n]{1,100}(?:probability|impact|likelihood)[^.!?\n]{1,100})'
-            ]
-            
-            risk_names = set()  # Avoid duplicates
-            for pattern in risk_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                for match in matches:
-                    risk_text = match.strip()
-                    if len(risk_text) > 10 and len(risk_text) < 100:
-                        # Clean up risk text
-                        risk_text = re.sub(r'^\d+[\.)\s]*', '', risk_text)
-                        risk_text = risk_text.strip()
-                        
-                        if risk_text not in risk_names:
-                            risk_names.add(risk_text)
-                            
-                            # Assign probability and impact based on keywords
-                            risk_lower = risk_text.lower()
-                            
-                            # Determine probability (0.2 to 0.9)
-                            if any(word in risk_lower for word in ['high', 'likely', 'probable', 'common']):
-                                probability = 0.8
-                            elif any(word in risk_lower for word in ['medium', 'possible', 'moderate']):
-                                probability = 0.5
-                            else:
-                                probability = 0.3
-                            
-                            # Determine impact (0.2 to 0.9)
-                            if any(word in risk_lower for word in ['critical', 'major', 'severe', 'significant']):
-                                impact = 0.8
-                            elif any(word in risk_lower for word in ['medium', 'moderate', 'important']):
-                                impact = 0.5
-                            else:
-                                impact = 0.3
-                            
-                            risks.append({
-                                'name': risk_text[:50],  # Limit name length
-                                'probability': probability,
-                                'impact': impact
-                            })
-                            
-                            if len(risks) >= 8:  # Limit to 8 risks
-                                break
-                
-                if risks:
-                    break  # Use first successful pattern
-        
-        # Default risks if none extracted
-        if not risks:
-            risks = [
-                {'name': 'Technical Integration Risk', 'probability': 0.3, 'impact': 0.7},
-                {'name': 'Timeline Delays', 'probability': 0.4, 'impact': 0.6},
-                {'name': 'Resource Availability', 'probability': 0.2, 'impact': 0.8},
-                {'name': 'Requirements Changes', 'probability': 0.5, 'impact': 0.5},
-                {'name': 'Budget Overrun', 'probability': 0.2, 'impact': 0.9}
-            ]
-        
-        return {'risks': risks}
-    
-    def _extract_bar_chart_data(self, content: str, section_name: str) -> Dict[str, Any]:
-        """Extract data for bar chart from section content"""
-        # Try to extract comparative data from content
-        categories = []
-        values = []
-        
-        # Look for numbered items or comparisons in content
-        content_lower = content.lower()
-        
-        # Try to extract metrics or comparisons
-        if any(keyword in content_lower for keyword in ['phase', 'stage', 'step', 'milestone', 'component']):
-            # Extract phase/stage data
-            phase_patterns = [
-                r'(\d+[\.)\s]*[^.!?\n]{1,50})',
-                r'phase\s+(\d+)[:\-\s]*([^.!?\n]{1,50})',
-                r'([A-Z][^.!?\n]{1,50}(?:phase|stage|step))'
-            ]
-            
-            for pattern in phase_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                for i, match in enumerate(matches[:6]):  # Limit to 6 items
-                    if isinstance(match, tuple):
-                        category = match[1].strip() if len(match) > 1 else match[0].strip()
-                    else:
-                        category = match.strip()
-                    
-                    # Clean category name
-                    category = re.sub(r'^\d+[\.)\s]*', '', category)[:30]
-                    if category and len(category) > 3:
-                        categories.append(category)
-                        # Generate reasonable values
-                        values.append(20 + (i * 10) + (i % 3) * 5)
-                
-                if categories:
-                    break
-        
-        # Default data if none extracted - make it section-aware
-        if not categories:
-            name_lower = section_name.lower()
-            if 'support' in name_lower or 'maintenance' in name_lower:
-                categories = ['SLA Support', 'Monitoring & Alerts', 'Bug Fixes', 'Security Patching', 'Minor Enhancements']
-                values = [30, 15, 20, 15, 20]
-                title = 'Support & Maintenance Allocation (%)'
-            elif 'solution' in name_lower or 'features' in name_lower:
-                categories = ['Core Features', 'Integrations', 'Security', 'Reporting']
-                values = [40, 25, 20, 15]
-                title = 'Solution Capability Emphasis'
-            elif 'implementation' in name_lower or 'work plan' in name_lower:
-                categories = ['Phase 1', 'Phase 2', 'Phase 3', 'Phase 4']
-                values = [25, 35, 30, 40]
-                title = 'Implementation Phases'
-            else:
-                categories = ['Planning', 'Execution', 'Testing', 'Handover']
-                values = [20, 50, 20, 10]
-                title = f'{section_name} Breakdown'
-        else:
-            title = f'{section_name} Breakdown'
-        
-        return {
-            'title': title,
-            'categories': categories[:6],  # Limit to 6 items
-            'values': values[:6],
-            'x_label': 'Categories',
-            'y_label': 'Value'
-        }
-    
-    def _extract_pie_chart_data(self, content: str, section_name: str) -> Dict[str, Any]:
-        """Extract data for pie chart from section content"""
-        # Try to extract distribution data from content
-        labels = []
-        values = []
-        
-        content_lower = content.lower()
-        
-        # Look for percentage or distribution patterns
-        if any(keyword in content_lower for keyword in ['percent', '%', 'distribution', 'allocation', 'breakdown']):
-            # Try to extract percentages
-            percent_patterns = [
-                r'(\d+(?:\.\d+)?)\s*%[^\w]*([^.!?\n]{1,40})',
-                r'([^.!?\n]{1,40})[^\w]*(\d+(?:\.\d+)?)\s*%'
-            ]
-            
-            for pattern in percent_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                for match in matches[:6]:  # Limit to 6 items
-                    if '%' in match[0] or match[0].replace('.', '').isdigit():
-                        try:
-                            value = float(match[0].replace('%', '').strip())
-                            label = match[1].strip()[:25]
-                        except:
-                            continue
-                    else:
-                        try:
-                            value = float(match[1].replace('%', '').strip())
-                            label = match[0].strip()[:25]
-                        except:
-                            continue
-                    
-                    if label and value > 0:
-                        labels.append(label)
-                        values.append(value)
-                
-                if labels:
-                    break
-        
-        # Attempt to infer deliverables list from bullets/lines when section mentions deliverables
-        if not labels and 'deliverable' in section_name.lower():
-            item_lines = []
-            for line in content.split('\n'):
-                line_stripped = line.strip().lstrip('-*').strip()
-                if not line_stripped:
-                    continue
-                if any(k in line_stripped.lower() for k in ['deliverable', 'video', 'print', 'report', 'module', 'feature', 'milestone', 'document', 'training', 'deployment']):
-                    item_lines.append(line_stripped)
-            # Deduplicate and cap
-            unique = []
-            for it in item_lines:
-                key = it[:25]
-                if key and key not in unique:
-                    unique.append(key)
-                if len(unique) >= 6:
-                    break
-            if len(unique) >= 2:
-                labels = unique
-                # Even split values
-                per = round(100 / len(labels), 2)
-                values = [per] * len(labels)
-
-        # Try to infer items for deliverables/solution sections
-        if not labels and any(k in section_name.lower() for k in ['deliverable', 'solution', 'proposed solution']):
-            candidates = []
-            for line in content.split('\n'):
-                raw = line.strip().lstrip('-*').strip()
-                if not raw:
-                    continue
-                raw_l = raw.lower()
-                if any(w in raw_l for w in ['feature', 'module', 'service', 'component', 'capability', 'deliverable', 'video', 'print', 'report', 'dashboard']):
-                    candidates.append(raw[:25])
-            # de-duplicate preserving order
-            seen = set()
-            inferred = []
-            for item in candidates:
-                if item and item not in seen:
-                    seen.add(item)
-                    inferred.append(item)
-                if len(inferred) >= 6:
-                    break
-            if len(inferred) >= 2:
-                labels = inferred
-                share = round(100 / len(labels), 2)
-                values = [share] * len(labels)
-
-        # Default data if none extracted
-        if not labels:
-            if 'success' in section_name.lower() or 'case' in section_name.lower():
-                labels = ['Healthcare', 'Finance', 'Retail', 'Technology', 'Manufacturing']
-                values = [25, 20, 15, 30, 10]
-                title = 'Industry Distribution'
-            elif 'implementation' in section_name.lower():
-                labels = ['Planning', 'Development', 'Testing', 'Deployment', 'Support']
-                values = [15, 40, 20, 15, 10]
-                title = 'Resource Allocation'
-            else:
-                labels = ['Category A', 'Category B', 'Category C', 'Category D']
-                values = [30, 25, 20, 25]
-                title = f'{section_name} Distribution'
-        else:
-            title = f'{section_name} Breakdown'
-        
-        return {
-            'title': title,
-            'labels': labels[:6],  # Limit to 6 items
-            'values': values[:6]
-        }
-    
-    def _extract_line_chart_data(self, content: str, section_name: str, request) -> Dict[str, Any]:
-        """Extract data for line chart from section content"""
-        # Try to extract trend or timeline data
-        x_data = []
-        y_data = []
-        
-        content_lower = content.lower()
-        
-        # Look for temporal or sequential patterns
-        if any(keyword in content_lower for keyword in ['month', 'week', 'quarter', 'year', 'progress', 'growth']):
-            # Extract timeline references
-            time_patterns = [
-                r'(month|week|quarter|year)\s+(\d+)',
-                r'(\d+)\s+(months?|weeks?|quarters?|years?)',
-                r'(Q\d+|Week\s+\d+|Month\s+\d+)'
-            ]
-            
-            for pattern in time_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                if len(matches) >= 3:  # Need at least 3 points for a line
-                    for i, match in enumerate(matches[:8]):  # Limit to 8 points
-                        if isinstance(match, tuple):
-                            x_label = f"{match[0]} {match[1]}" if len(match) > 1 else match[0]
-                        else:
-                            x_label = match
-                        x_data.append(x_label)
-                        # Generate progressive values
-                        y_data.append(10 + (i * 15) + (i ** 1.5) * 5)
-                    
-                    if x_data:
-                        break
-        
-        # Default data if none extracted - adapt to RFP timeline
-        if not x_data:
-            name_lower = section_name.lower()
-            if 'technical' in name_lower or 'methodology' in name_lower or 'project plan' in name_lower or 'timeline' in name_lower:
-                # Derive number of weeks from request timeline if available
-                weeks = 8
-                try:
-                    import re
-                    # Helper to normalize Eastern Arabic numerals
-                    def normalize_digits(s: str) -> str:
-                        trans = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
-                        return s.translate(trans)
-
-                    # 1) Prefer explicit weeks in section content
-                    content_norm = normalize_digits(content or '')
-                    mw = re.search(r'(\d+)\s*(weeks?|week)', content_norm, re.IGNORECASE)
-                    if mw:
-                        weeks = int(mw.group(1))
-                    else:
-                        # 2) Fallback to months in section content
-                        mm = re.search(r'(\d+)\s*(months?|month)', content_norm, re.IGNORECASE)
-                        if mm:
-                            weeks = int(mm.group(1)) * 4
-                        else:
-                            # 3) Use request timeline (months or weeks)
-                            tl = normalize_digits(getattr(request, 'timeline', '') or '') if request else ''
-                            mw2 = re.search(r'(\d+)\s*(weeks?|week)', tl, re.IGNORECASE)
-                            if mw2:
-                                weeks = int(mw2.group(1))
-                            else:
-                                m2 = re.search(r'(\d+)', tl)
-                                if m2:
-                                    months = int(m2.group(1))
-                                    weeks = months * 4
-                                else:
-                                    # 4) Check rfp_extracted timeline field
-                                    reqs = getattr(request, 'requirements', {}) or {}
-                                    ext = reqs.get('rfp_extracted', {}) if isinstance(reqs, dict) else {}
-                                    tl2 = normalize_digits(str(ext.get('timeline', '')))
-                                    mw3 = re.search(r'(\d+)\s*(weeks?|week)', tl2, re.IGNORECASE)
-                                    if mw3:
-                                        weeks = int(mw3.group(1))
-                                    else:
-                                        m3 = re.search(r'(\d+)', tl2)
-                                        if m3:
-                                            weeks = int(m3.group(1)) * 4
-                except Exception:
-                    pass
-                # Clamp to sensible bounds
-                weeks = max(4, min(24, int(weeks)))
-                x_data = [f'Week {i+1}' for i in range(weeks)]
-                # Create a smooth S-curve progress trend
-                y_data = []
-                for i in range(weeks):
-                    pct = int(5 + (i / max(1, weeks - 1)) * 95)
-                    y_data.append(pct)
-                title = 'Development Progress'
-                x_label = 'Timeline'
-                y_label = 'Completion %'
-            else:
-                x_data = ['Q1', 'Q2', 'Q3', 'Q4']
-                y_data = [20, 35, 55, 80]
-                title = f'{section_name} Progress'
-                x_label = 'Quarter'
-                y_label = 'Progress'
-        else:
-            title = f'{section_name} Trend Analysis'
-            x_label = 'Timeline'
-            y_label = 'Value'
-        
-        return {
-            'title': title,
-            'x_data': x_data[:8],  # Limit to 8 points
-            'y_data': y_data[:8],
-            'x_label': x_label,
-            'y_label': y_label
-        }
-    
-    async def _generate_charts_legacy_sdk(self, context: Dict):
-        """Legacy SDK agent approach for chart generation (fallback)"""
-        chart_generator = get_agent("chart_generator")
-        
-        # Set output format for chart generation tools (default to static)
-        self._set_chart_output_format('static')
-        
-        for section_name, section_config in self.section_routing.items():
-            if section_config.get('generate_chart'):
-                chart_type = section_config['generate_chart']
-                logger.info(f"Generating {chart_type} chart for {section_name} (legacy SDK)")
-                
-                try:
-                    # Log chart generation start
-                    agent_logger.log_agent_execution(
-                        chart_generator.name if hasattr(chart_generator, 'name') else 'chart_generator',
-                        f"generate_chart_{section_name}_legacy",
-                        {"section_name": section_name, "chart_type": chart_type},
-                        {"status": "starting", "method": "legacy_sdk"}
-                    )
-                    
-                    # Prepare minimal chart data - only essential extracted data
-                    chart_data = self._prepare_minimal_chart_data(section_name, chart_type, context)
-                    
-                    # Create simple, direct prompts for each chart type
-                    if chart_type == 'gantt':
-                        chart_prompt = f"""Use the generate_gantt_chart tool to create a Gantt chart.
-
-Project: {chart_data.get('title', 'Project Timeline')}
-Phases: {chart_data.get('phases', [])}
-Duration: {chart_data.get('duration_months', 3)} months
-
-Call the generate_gantt_chart tool now."""
-
-                    elif chart_type == 'budget_breakdown':
-                        chart_prompt = f"""Use the create_budget_chart tool to create a budget breakdown.
-
-Budget Items: {chart_data.get('budget_items', [])}
-Total: ${chart_data.get('total_budget', 100000):,.2f}
-
-Call the create_budget_chart tool now."""
-
-                    elif chart_type == 'risk_matrix':
-                        chart_prompt = f"""Use the build_risk_matrix tool to create a risk matrix.
-
-Risks: {chart_data.get('risks', [])}
-
-Call the build_risk_matrix tool now."""
-
-                    else:
-                        chart_prompt = f"""Create a {chart_type} chart using the appropriate tool.
-
-Data: {chart_data}
-
-Use the most suitable chart generation tool."""
-                    
-                    # Prepare minimal context for chart generation
-                    minimal_context = prepare_minimal_chart_context(section_name, chart_type, context)
-                    
-                    # Check token count before API call
-                    total_prompt = chart_prompt + str(minimal_context)
-                    token_count = count_tokens(total_prompt, 'gpt-4o')
-                    
-                    if token_count > CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS:
-                        logger.warning(f"Chart prompt too long ({token_count} tokens), truncating...")
-                        chart_prompt = truncate_text(chart_prompt, CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS - 500, 'gpt-4o')
-                        minimal_context = {"chart_type": chart_type, "basic_data": str(chart_data)[:500]}
-                    
-                    # Use minimal context only
-                    response = await Runner.run(
-                        chart_generator,
-                        chart_prompt,
-                        context=minimal_context
-                    )
-                    
-                    # Extract and validate chart HTML
-                    chart_html = self._extract_chart_html_from_response(response)
-                    
-                    # Validate HTML content
-                    if not chart_html or len(chart_html.strip()) < 50:
-                        logger.warning(f"Generated chart HTML for {section_name} seems too short or empty")
-                        chart_html = f"<div>Chart generation incomplete for {section_name} ({chart_type})</div>"
-                    
-                    # Check if HTML contains expected chart elements
-                    if not any(keyword in chart_html.lower() for keyword in ['plotly', 'chart', 'svg', 'canvas', '<div']):
-                        logger.warning(f"Chart HTML for {section_name} may not contain valid chart content")
-                        chart_html = f"<div>Chart content validation failed for {section_name}</div>"
-                    
-                    context["charts"][section_name] = {
-                        "type": chart_type,
-                        "data": chart_html,
-                        "generated_at": datetime.now().isoformat(),
-                        "data_used": chart_data,
-                        "html_length": len(chart_html),
-                        "method": "legacy_sdk"
-                    }
-                    
-                    # Log successful chart generation
-                    agent_logger.log_agent_execution(
-                        chart_generator.name if hasattr(chart_generator, 'name') else 'chart_generator',
-                        f"generate_chart_{section_name}_legacy",
-                        {"section_name": section_name, "chart_type": chart_type},
-                        {"status": "success", "chart_type": chart_type, "method": "legacy_sdk"}
-                    )
-                    
-                    # Track cost with SDK response
-                    self.cost_tracker.track_completion(response, model="gpt-4o")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to generate chart for {section_name} (legacy): {str(e)}")
-                    # Log chart generation failure
-                    agent_logger.log_agent_execution(
-                        chart_generator.name if hasattr(chart_generator, 'name') else 'chart_generator',
-                        f"generate_chart_{section_name}_legacy",
-                        {"section_name": section_name, "chart_type": chart_type},
-                        {"status": "error", "error": str(e), "method": "legacy_sdk"}
-                    )
     
     async def _evaluate_quality(self, context: Dict):
         """Evaluate the quality of generated content"""
@@ -2283,6 +935,9 @@ Use the most suitable chart generation tool."""
                     context={"section_name": section_name}
                 )
                 
+                # Track cost with SDK response
+                self.cost_tracker.track_completion(response)
+                
                 score_text = self._extract_content_from_sdk_response(response)
                 
                 # Extract numeric score
@@ -2303,7 +958,7 @@ Use the most suitable chart generation tool."""
                     logger.warning(f"Could not parse quality score for {section_name}: {score_text}")
                 
                 # Track cost with SDK response
-                self.cost_tracker.track_completion(response, model="gpt-4o")
+                self.cost_tracker.track_completion(response)
                 
             except Exception as e:
                 logger.error(f"Failed to evaluate section {section_name}: {str(e)}")
@@ -2320,87 +975,7 @@ Use the most suitable chart generation tool."""
             overall_score = total_score / section_count
             context["metadata"]["quality_score"] = overall_score
             logger.info(f"Overall proposal quality score: {overall_score:.1f}/10")
-    
-    async def generate_section(self, section_name: str, routing: Dict = None, context: Dict = None) -> Dict:
-        """Public interface for generating a single section (used by orchestrator)"""
-        # Create a ProposalRequest from context if not provided
-        if 'request' not in context:
-            context['request'] = ProposalRequest(
-                client_name=context.get('client_name', 'Unknown'),
-                project_name=context.get('project_name', 'Unknown'),
-                project_type=context.get('project_type', 'general'),
-                requirements=context.get('requirements', {}),
-                timeline=context.get('timeline', '3 months')
-            )
-        
-        # Get coordinator agent
-        coordinator = get_agent("coordinator")
-        
-        # Generate the section with updated context handling
-        result = await self._generate_section(section_name, context, coordinator)
-        
-        return result
-    
-    async def evaluate_single_section(self, section_name: str, content: Dict = None) -> float:
-        """Evaluate quality of a single section (used by orchestrator)"""
-        evaluator = get_agent("quality_evaluator")
-        
-        try:
-            # Truncate content for evaluation
-            section_content = content.get('content', '') if content else ''
-            truncated_content = truncate_text(section_content, 3000, 'gpt-4o')
-            
-            eval_prompt = f"""
-            Evaluate the quality of this proposal section on a scale of 1-10:
-            
-            Section: {section_name}
-            Content: {truncated_content}
-            
-            Rate based on:
-            - Relevance to requirements (25%)
-            - Technical accuracy (25%) 
-            - Clarity and readability (20%)
-            - Completeness (20%)
-            - Professionalism (10%)
-            
-            Return only a numeric score.
-            """
-            
-            # Log evaluation start
-            agent_logger.log_agent_execution(
-                evaluator.name if hasattr(evaluator, 'name') else 'quality_evaluator',
-                f"evaluate_single_{section_name}",
-                {"section_name": section_name},
-                {"status": "starting"}
-            )
-            
-            response = await Runner.run(
-                evaluator,
-                eval_prompt,
-                context={"section_name": section_name, "word_count": len(section_content.split()) if section_content else 0}
-            )
-            
-            score_text = self._extract_content_from_sdk_response(response)
-            
-            # Extract numeric score
-            try:
-                score = float(score_text.strip())
-                # Log successful evaluation
-                agent_logger.log_agent_execution(
-                    evaluator.name if hasattr(evaluator, 'name') else 'quality_evaluator',
-                    f"evaluate_single_{section_name}",
-                    {"section_name": section_name},
-                    {"status": "success", "score": score}
-                )
-                return score
-            except ValueError:
-                logger.warning(f"Could not parse quality score for {section_name}: {score_text}")
-                return 7.5  # Default score
-                
-        except Exception as e:
-            logger.error(f"Failed to evaluate section {section_name}: {str(e)}")
-            return 7.5  # Default score
-    
+
     def _extract_content_from_sdk_response(self, response) -> str:
         """Extract content from SDK response object with JSON parsing support"""
         
@@ -2454,9 +1029,9 @@ Use the most suitable chart generation tool."""
                         if isinstance(parsed_json, str):
                             return parsed_json
                         
-                        # If JSON is a dict but no content field, return JSON as string for backward compatibility
-                        logger.warning("JSON found but no content field, returning JSON string")
-                        return json.dumps(parsed_json, indent=2)
+                        # If JSON is a dict but no content field, extract readable content
+                        logger.warning("JSON found but no content field, extracting readable content")
+                        return self._extract_readable_from_json(parsed_json)
                         
                     except json.JSONDecodeError as json_err:
                         logger.warning(f"Invalid JSON in code block, falling back to raw content: {json_err}")
@@ -2565,11 +1140,15 @@ Use the most suitable chart generation tool."""
             
             # Check message size before API call
             total_input = message + str(context_variables)
-            token_count = count_tokens(total_input, 'gpt-4o')
-            
-            if token_count > CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS:
+            token_count = estimate_tokens(total_input)
+
+            # Get model from config for dynamic context limit
+            model_used = self.config.get('openai', {}).get('model', 'gpt-4o')
+            context_limit = get_context_limit(model_used)
+
+            if token_count > context_limit - RESPONSE_RESERVE_TOKENS:
                 logger.warning(f"Agent input too large ({token_count} tokens), truncating message...")
-                message = truncate_text(message, CONTEXT_LIMITS['gpt-4o'] - RESPONSE_RESERVE_TOKENS - 200, 'gpt-4o')
+                message = truncate_text(message, context_limit - RESPONSE_RESERVE_TOKENS - 200, model_used)
                 context_variables = {'agent': agent.name if hasattr(agent, 'name') else 'agent'}
             
             # Use SDK Runner for execution
@@ -2583,7 +1162,7 @@ Use the most suitable chart generation tool."""
             content = self._extract_content_from_sdk_response(response)
             
             # Track cost with SDK response
-            self.cost_tracker.track_completion(response, model="gpt-4o")
+            self.cost_tracker.track_completion(response)
             
             return {
                 'content': content,
@@ -2604,6 +1183,76 @@ Use the most suitable chart generation tool."""
         """Get current cost tracking summary"""
         return self.cost_tracker.get_summary()
     
+    def _extract_readable_from_json(self, parsed_json: dict) -> str:
+        """Extract readable content from structured JSON responses"""
+        try:
+            # Handle ResearchAgent response format
+            if 'topic' in parsed_json and ('summary' in parsed_json or 'findings' in parsed_json):
+                logger.debug("Detected ResearchAgent JSON format, converting to readable content")
+                content_parts = []
+                
+                # Add summary as main content if available
+                if 'summary' in parsed_json and parsed_json['summary'].strip():
+                    content_parts.append(parsed_json['summary'].strip())
+                
+                # Add findings as bullet points if available
+                if 'findings' in parsed_json and isinstance(parsed_json['findings'], list):
+                    findings_content = []
+                    for finding in parsed_json['findings']:
+                        if isinstance(finding, dict):
+                            if 'insight' in finding:
+                                findings_content.append(f"- {finding['insight']}")
+                            elif 'data_point' in finding:
+                                findings_content.append(f"- {finding['data_point']}")
+                        elif isinstance(finding, str):
+                            findings_content.append(f"- {finding}")
+                    
+                    if findings_content:
+                        content_parts.append("\n".join(findings_content))
+                
+                return "\n\n".join(content_parts) if content_parts else "[No readable content extracted]"
+            
+            # Handle ContentGenerator response format with nested structure
+            if 'section_title' in parsed_json and 'content' in parsed_json:
+                return parsed_json['content']
+            
+            # Handle responses with key_points, suggestions, recommendations
+            content_parts = []
+            if 'summary' in parsed_json:
+                content_parts.append(parsed_json['summary'])
+            
+            if 'key_points' in parsed_json and isinstance(parsed_json['key_points'], list):
+                content_parts.append("\n".join([f"- {point}" for point in parsed_json['key_points']]))
+            
+            if 'recommendations' in parsed_json and isinstance(parsed_json['recommendations'], list):
+                content_parts.append("**Recommendations:**")
+                content_parts.append("\n".join([f"- {rec}" for rec in parsed_json['recommendations']]))
+                
+            if 'suggested_visuals' in parsed_json and isinstance(parsed_json['suggested_visuals'], list):
+                content_parts.append("**Suggested Visuals:**")
+                content_parts.append("\n".join([f"- {visual}" for visual in parsed_json['suggested_visuals']]))
+            
+            # If we found readable parts, return them
+            if content_parts:
+                return "\n\n".join(content_parts)
+            
+            # Final fallback - check for any string values in the JSON
+            text_values = []
+            for key, value in parsed_json.items():
+                if isinstance(value, str) and len(value.strip()) > 10:  # Only meaningful text
+                    if key not in ['topic', 'confidence_level', 'model_used']:  # Skip metadata
+                        text_values.append(value.strip())
+            
+            if text_values:
+                return "\n\n".join(text_values)
+            
+            # If all else fails, return a placeholder
+            return "[Complex structured response - unable to extract readable content]"
+            
+        except Exception as e:
+            logger.error(f"Error extracting readable content from JSON: {str(e)}")
+            return "[Error processing structured response]"
+
     def get_total_cost(self) -> float:
         """Get total cost"""
         return self.cost_tracker.get_total_cost()

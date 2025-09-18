@@ -51,8 +51,7 @@ class ColoredFormatter(logging.Formatter):
         'content_generator': Colors.GREEN,
         'researcher': Colors.MAGENTA,
         'budget_calculator': Colors.YELLOW,
-        'quality_evaluator': Colors.CYAN,
-        'chart_generator': Colors.WHITE,
+        'quality_evaluator': Colors.CYAN        
     }
     
     def format(self, record):
@@ -125,20 +124,16 @@ class ProposalLogger:
         
     def setup_logging(self):
         """Setup all logging configurations"""
-        
-        # Create logs directory
-        logs_dir = Path('logs')
-        logs_dir.mkdir(exist_ok=True)
-        
+
         # Root logger configuration
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
-        
+
         # Console handler with colored output
         console_handler = logging.StreamHandler(sys.stdout)
         console_level = getattr(logging, self.config.get('console_level', 'INFO'))
         console_handler.setLevel(console_level)
-        
+
         if self.config.get('colored_output', True):
             console_formatter = ColoredFormatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -150,23 +145,28 @@ class ProposalLogger:
                 datefmt='%H:%M:%S'
             )
         console_handler.setFormatter(console_formatter)
-        
-        # File handler for main log
-        file_handler = logging.FileHandler(self.config['file'])
-        file_level = getattr(logging, self.config.get('level', 'INFO'))
-        file_handler.setLevel(file_level)
-        file_formatter = logging.Formatter(self.config['format'])
-        file_handler.setFormatter(file_formatter)
-        
-        # Agent interaction handler
-        if self.config.get('save_agent_interactions', False):
+
+        # Add console handler
+        root_logger.addHandler(console_handler)
+
+        # File handler for main log (only if file logging is enabled)
+        if self.config.get('file'):
+            # Create logs directory only if needed
+            logs_dir = Path('logs')
+            logs_dir.mkdir(exist_ok=True)
+
+            file_handler = logging.FileHandler(self.config['file'])
+            file_level = getattr(logging, self.config.get('level', 'INFO'))
+            file_handler.setLevel(file_level)
+            file_formatter = logging.Formatter(self.config['format'])
+            file_handler.setFormatter(file_formatter)
+            root_logger.addHandler(file_handler)
+
+        # Agent interaction handler (only if enabled)
+        if self.config.get('save_agent_interactions', False) and self.config.get('agent_logs_dir'):
             agent_handler = AgentLogHandler(self.config.get('agent_logs_dir', 'logs/agents'))
             agent_handler.setLevel(logging.DEBUG)
             root_logger.addHandler(agent_handler)
-        
-        # Add handlers to root logger
-        root_logger.addHandler(console_handler)
-        root_logger.addHandler(file_handler)
         
         # Silence verbose PDF-related loggers
         logging.getLogger('pdfminer').setLevel(logging.WARNING)
@@ -187,24 +187,26 @@ class ProposalLogger:
         self.setup_agent_loggers()
         
     def setup_agent_loggers(self):
-        """Setup individual loggers for each agent"""
+        """Setup individual loggers for each agent (only if agent logging is enabled)"""
+        if not self.config.get('save_agent_interactions', False) or not self.config.get('agent_logs_dir'):
+            return
+
         agents = [
             'coordinator',
-            'content_generator', 
+            'content_generator',
             'researcher',
             'budget_calculator',
-            'quality_evaluator',
-            'chart_generator'
+            'quality_evaluator'
         ]
-        
+
         for agent in agents:
             agent_logger = logging.getLogger(f'agent.{agent}')
             agent_logger.setLevel(logging.DEBUG)
-            
+
             # Create agent-specific file handler
             agent_file = Path('logs') / 'agents' / f'{agent}.log'
             agent_file.parent.mkdir(parents=True, exist_ok=True)
-            
+
             handler = logging.FileHandler(agent_file)
             handler.setLevel(logging.DEBUG)
             formatter = logging.Formatter(

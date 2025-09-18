@@ -19,14 +19,12 @@ from .sdk_agents import (
     content_generator_agent,
     research_agent,
     budget_calculator_agent,
-    chart_generator_agent,
     quality_evaluator_agent,
     
     # Transfer functions for agent handoffs
     transfer_to_content_generator,
     transfer_to_researcher,
     transfer_to_budget_calculator,
-    transfer_to_chart_generator,
     transfer_to_quality_evaluator,
     
     # Coordinator alias
@@ -49,14 +47,12 @@ __all__ = [
     'content_generator_agent', 
     'research_agent',
     'budget_calculator_agent',
-    'chart_generator_agent',
     'quality_evaluator_agent',
     
     # Transfer functions
     'transfer_to_content_generator',
     'transfer_to_researcher', 
     'transfer_to_budget_calculator',
-    'transfer_to_chart_generator',
     'transfer_to_quality_evaluator',
     
     # Coordinator alias

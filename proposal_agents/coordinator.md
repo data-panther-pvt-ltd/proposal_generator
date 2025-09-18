@@ -65,13 +65,8 @@ For each section in proposal outline:
    - Specify timeline constraints
    - Pass skills and rates data
 
-4. **With Chart Generator**
-   - Specify chart type needed
-   - Provide data in structured format
-   - Define visual requirements
-   - Include branding guidelines
 
-5. **With Quality Evaluator**
+4. **With Quality Evaluator**
    - Submit completed sections for review
    - Include evaluation criteria
    - Handle improvement recommendations

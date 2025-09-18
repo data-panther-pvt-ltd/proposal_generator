@@ -4,19 +4,23 @@ Tool implementations for agents
 
 import json
 import asyncio
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
 import pandas as pd
 import os
 import logging
 
+if TYPE_CHECKING:
+    from core.simple_cost_tracker import SimpleCostTracker
+
 logger = logging.getLogger(__name__)
 
 class ToolManager:
     """Manages tools available to agents"""
-    
-    def __init__(self, config: Dict):
+
+    def __init__(self, config: Dict, cost_tracker: Optional['SimpleCostTracker'] = None):
         self.config = config
+        self.cost_tracker = cost_tracker
         self.web_search_config = config.get('web_search', {})
         
         # Initialize OpenAI client (always needed)
@@ -80,17 +84,22 @@ class ToolManager:
                     input=f"Search for: {query}. Provide {max_results} relevant results.",
                     tools=[{"type": "web_search"}],  # Built-in web search tool
                 )
-                
+
+                # Track cost if cost_tracker is available
+                if self.cost_tracker:
+                    model_used = self.config.get('openai', {}).get('model', 'gpt-4o')
+                    self.cost_tracker.track_completion(response, model=model_used)
+
                 # Extract search results from response
                 logger.info(f"OpenAI web search completed for query: {query}")
-                
+
                 # The response includes web search results with citations
                 # For now, return structured results based on the response
                 if hasattr(response, 'output_text'):
                     # Parse the output to extract search results
                     # In production, the API returns structured search results
                     return []
-                
+
                 return []
             
         except Exception as e:

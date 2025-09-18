@@ -60,14 +60,36 @@ Phase 5 (Support): 5-10% of total
 
 ## Resource Allocation Strategy
 
+### CRITICAL CLIENT REQUIREMENTS
+
+1. **NO TEAM CAPACITY MENTIONS**: Never mention team capacity or availability in proposals
+2. **TIMELINE ADHERENCE**:
+   - If RFP specifies timeline: Follow it STRICTLY
+   - If no RFP timeline: Provide realistic timeline with proper margins (avoid 4-week development for complex projects)
+3. **TECHNOLOGY-SPECIFIC RESOURCES**: If any technology is mentioned in RFP:
+   - First search skill_company.csv for matching skills
+   - If required technology skills not found in CSV, automatically add them
+   - Ensure all mentioned technologies have corresponding resources allocated
+4. **GOVERNMENT SECTOR RESTRICTIONS**: No junior resources allowed for government/public sector contracts
+5. **DETAILED REQUIREMENTS VISION**: Provide our detailed vision for requirements, not just "as stated in RFP"
+
 ### Team Composition Guidelines
 ```python
-def calculate_team_mix():
-    team = {
-        "senior": 20-30%,     # Strategic and architecture
-        "mid-level": 40-50%,  # Core development
-        "junior": 30-40%      # Support and routine tasks
-    }
+def calculate_team_mix(client_sector="private"):
+    if client_sector.lower() in ["government", "gov", "public", "ministry", "authority"]:
+        # Government contracts: NO JUNIOR RESOURCES ALLOWED
+        team = {
+            "senior": 40-50%,     # Strategic, architecture, and complex development
+            "mid-level": 50-60%,  # Core development and implementation
+            # Note: Junior resources not allowed for government contracts
+        }
+    else:
+        # Private sector: Normal team composition
+        team = {
+            "senior": 20-30%,     # Strategic and architecture
+            "mid-level": 40-50%,  # Core development
+            "junior": 30-40%      # Support and routine tasks
+        }
     return optimize_for_budget_and_quality(team)
 ```
 
@@ -152,6 +174,46 @@ Total Estimate: $931,200
 - Automation opportunities
 - Reusable components
 
+## Technology Skills Allocation Workflow
+
+### Step 1: Extract Technologies from RFP
+When technologies are mentioned in RFP, follow this process:
+1. Parse RFP content for technology mentions (Python, React, AWS, etc.)
+2. Create list of required technology skills
+3. Proceed to skill matching process
+
+### Step 2: Search skill_company.csv
+For each required technology:
+1. Search skill_company.csv for exact matches
+2. Search for partial matches (e.g., "React" in "React.js Developer")
+3. Search for related skills (e.g., "Frontend" for React, "Backend" for Python)
+4. Record found skills with their rates and experience levels
+
+### Step 3: Identify Missing Skills
+For technologies not found in skill_company.csv:
+1. Note the missing technology skill
+2. Prepare to add as external resource requirement
+3. Estimate appropriate rate based on market standards
+
+### Step 4: Allocate Resources
+```
+For each technology mentioned in RFP:
+  IF skill exists in skill_company.csv:
+    - Allocate internal resource with CSV rates
+    - Use appropriate seniority level
+  ELSE:
+    - Flag as external skill requirement
+    - Estimate market rate for the technology
+    - Add to skill_external.csv recommendations
+    - Allocate as vendor/consultant resource
+```
+
+### Step 5: Documentation
+Document in proposal:
+- "Our team includes specialists in [technology] as required"
+- "We have allocated dedicated [technology] resources"
+- Never mention if skill was missing from internal team
+
 ## Regional Considerations (KSA)
 
 ### Local Market Factors
@@ -227,15 +289,6 @@ High Risk: +20-25% contingency
 | Deployment | - | - | $40,000 | $40,000 |
 | **Monthly Total** | **$80,000** | **$140,000** | **$180,000** | **$400,000** |
 ```
-
-## Integration with Chart Generator
-
-Provide data for:
-1. **Budget Pie Chart**: Component breakdown
-2. **Timeline Bar Chart**: Monthly spending
-3. **Resource Allocation**: Team composition
-4. **Cost Comparison**: Options analysis
-5. **ROI Projection**: Value over time
 
 ## Quality Checks
 

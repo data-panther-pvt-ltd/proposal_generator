@@ -6,11 +6,14 @@ Simple fallback PDF processing without external dependencies
 
 import re
 import tiktoken
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from pathlib import Path
 import logging
 from dataclasses import dataclass
 import json
+
+if TYPE_CHECKING:
+    from core.simple_cost_tracker import SimpleCostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +57,8 @@ class DocumentProcessor:
         chunk_overlap: int = 120,  # 15% of 800
         encoding_model: str = "cl100k_base",  # GPT-4 encoding
         min_chunk_size: int = 100,
-        config: Optional[Dict] = None
+        config: Optional[Dict] = None,
+        cost_tracker: Optional['SimpleCostTracker'] = None
     ):
         """
         Initialize document processor
@@ -69,8 +73,9 @@ class DocumentProcessor:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.min_chunk_size = min_chunk_size
-        self.encoding = tiktoken.get_encoding(encoding_model)
+        self.encoding = tiktoken.get_encoding(encoding_model)  # Keep for chunking operations
         self.config = config or {}
+        self.cost_tracker = cost_tracker
         
         # Semantic boundaries for intelligent splitting
         self.section_markers = [
@@ -162,6 +167,7 @@ class DocumentProcessor:
             
             # For now, return empty chunks as OpenAI doesn't directly process PDFs
             # You would need to convert PDF to images or text first
+            # When API calls are implemented here, use self.cost_tracker.track_completion(response, model)
             return []
             
         except Exception as e:
@@ -478,7 +484,7 @@ class DocumentProcessor:
                 "total_tokens": 0,
                 "avg_tokens_per_chunk": 0,
                 "min_tokens": 0,
-                "max_tokens": 0,
+                "max_completion_tokens": 0,
                 "total_pages": 0
             }
         
@@ -493,7 +499,7 @@ class DocumentProcessor:
             "total_tokens": sum(token_counts),
             "avg_tokens_per_chunk": sum(token_counts) / len(token_counts),
             "min_tokens": min(token_counts),
-            "max_tokens": max(token_counts),
+            "max_completion_tokens": max(token_counts),
             "total_pages": len(all_pages),
             "pages_covered": sorted(list(all_pages))
         }

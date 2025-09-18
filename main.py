@@ -17,7 +17,6 @@ from typing import Dict, List, Any, Optional
 # Add this import at the top
 from core.rfp_extractor import RFPExtractor
 from dataclasses import dataclass
-from dataclasses import dataclass
 import pandas as pd
 import logging
 
@@ -28,16 +27,18 @@ from core.simple_cost_tracker import SimpleCostTracker
 from core.rag_retriever import RAGRetriever
 from core.html_generator import HTMLGenerator
 from core.pdf_exporter import PDFExporter
+from core.chart_integrator import ChartIntegrator
 from core.docx_exporter import DOCXExporter
+from core.proposal_corrector import ProposalCorrector
 from utils.data_loader import DataLoader
 from utils.validators import ProposalValidator
 from utils.logging_config import setup_logging, get_logger
 from utils.agent_logger import agent_logger
+from utils.config_loader import load_config_with_profile
 
 def load_config(config_path: str = "config/settings.yml") -> dict:
-    """Load configuration from YAML file"""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+    """Load configuration from YAML file with company profile from markdown"""
+    return load_config_with_profile(config_path)
 
 class ProposalGenerator:
     """SDK-integrated proposal generator with full OpenAI Agents SDK integration"""
@@ -45,7 +46,7 @@ class ProposalGenerator:
     def __init__(self, config_path: str = "config/settings.yml", cost_tracker: Optional[SimpleCostTracker] = None):
         """Initialize the SDK-integrated proposal generator"""
         self.config = self._load_config(config_path)
-        self.cost_tracker = cost_tracker or SimpleCostTracker()
+        self.cost_tracker = cost_tracker or SimpleCostTracker(self.config)
         
         # Initialize SDK runner with cost tracker instead of OpenAI client
         self.sdk_runner = ProposalRunner(config_path, self.cost_tracker)
@@ -58,6 +59,7 @@ class ProposalGenerator:
         self.docx_exporter = DOCXExporter(self.config)
         self.data_loader = DataLoader(self.config)
         self.validator = ProposalValidator(self.config)
+        self.chart_integrator = ChartIntegrator(self.config)
         
         # Load data
         self.skills_data = self.data_loader.load_skills_data()
@@ -73,9 +75,8 @@ class ProposalGenerator:
         logger.info(f"Available SDK agents: {list(self.agents.keys())}")
     
     def _load_config(self, config_path: str) -> Dict:
-        """Load configuration from YAML file"""
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+        """Load configuration from YAML file with company profile from markdown"""
+        return load_config_with_profile(config_path)
     
     async def generate_proposal(self, request: ProposalRequest) -> Dict[str, Any]:
         """
@@ -108,7 +109,7 @@ class ProposalGenerator:
     
     def _validate_sdk_agents(self):
         """Validate that all required SDK agents are available"""
-        required_agents = ["coordinator", "content_generator", "researcher", "budget_calculator", "chart_generator"]
+        required_agents = ["coordinator", "content_generator", "researcher", "budget_calculator"]
         logger = get_logger(__name__)
         
         for agent_name in required_agents:
@@ -179,11 +180,22 @@ class ProposalGenerator:
                     enhanced_sections[section_name]['metadata']['requires_review'] = True
         
         proposal['generated_sections'] = enhanced_sections
-        
+
+        # Integrate charts into sections if enabled
+        if self.config.get('output', {}).get('enable_charts', True):
+            logger.info("Integrating charts into proposal sections...")
+            try:
+                proposal = self.chart_integrator.embed_charts_in_sections(proposal)
+                proposal['metadata']['charts_integrated'] = True
+                logger.info("Charts successfully integrated into proposal sections")
+            except Exception as e:
+                logger.error(f"Failed to integrate charts: {e}")
+                proposal['metadata']['charts_integrated'] = False
+
         # Add cost tracking information from SimpleCostTracker
         cost_summary = self.cost_tracker.get_summary()
         proposal['metadata']['cost_tracking'] = cost_summary
-        
+
         logger.info("Proposal enhancement completed")
         return proposal
 
@@ -255,11 +267,7 @@ class ProposalGenerator:
             html_proposal['project'] = request.project_name
             html_proposal['client'] = request.client_name
             html_proposal['timeline'] = request.timeline
-            
-            # Ensure charts are included
-            if 'charts' not in html_proposal and 'charts' in proposal:
-                html_proposal['charts'] = proposal['charts']
-            
+
             return self.html_generator.generate(html_proposal)
         except Exception as e:
             logger.error(f"Failed to generate HTML output: {str(e)}")
@@ -279,9 +287,7 @@ class ProposalGenerator:
             html_proposal['client'] = request.client_name
             html_proposal['timeline'] = request.timeline
             
-            # Ensure charts are included
-            if 'charts' not in html_proposal and 'charts' in proposal:
-                html_proposal['charts'] = proposal['charts']
+
             
             return self.html_generator_pdf.generate(html_proposal)
         except Exception as e:
@@ -352,8 +358,8 @@ async def main():
 
     logger.info(f"Processing RFP PDF: {pdf_path}")
 
-    # Initialize cost tracker
-    cost_tracker = SimpleCostTracker()
+    # Initialize cost tracker with config
+    cost_tracker = SimpleCostTracker(config)
 
     # Initialize generator
     try:
@@ -414,6 +420,58 @@ async def main():
         if 'pdf_path' in proposal:
             logger.info(f"PDF saved to: {proposal['pdf_path']}")
 
+            # Ask user whether to continue with correction phase
+            if config.get('output', {}).get('enable_correction', True):
+                print("\n" + "=" * 60)
+                print("PROPOSAL GENERATION COMPLETED SUCCESSFULLY!")
+                print("=" * 60)
+                print(f"✅ Proposal saved to: {proposal['pdf_path']}")
+                print(f"✅ JSON saved to: {json_file}")
+                print(f"✅ HTML saved to: {html_file}")
+
+                # Prompt user for correction
+                user_input = input("\nDo you want to continue with the correction phase? (y/n): ").strip().lower()
+
+                if user_input in ['y', 'yes']:
+                    logger.info("=" * 60)
+                    logger.info("STARTING PROPOSAL CORRECTION AND SYNCHRONIZATION")
+                    logger.info("=" * 60)
+
+                    # Initialize corrector
+                    corrector = ProposalCorrector(config, cost_tracker)
+
+                    # Perform correction using JSON file path
+                    corrected_pdf, diff_report = await corrector.correct_proposal(str(json_file))
+
+                    # Update proposal with corrected versions
+                    proposal['corrected_pdf_path'] = corrected_pdf
+                    proposal['correction_report_path'] = diff_report
+
+                    logger.info(f"✅ Corrected proposal saved: {corrected_pdf}")
+                    logger.info(f"📋 Correction report saved: {diff_report}")
+
+                    # Update cost tracking with correction costs
+                    correction_cost = corrector.get_correction_cost()
+                    if correction_cost > 0:
+                        logger.info(f"Correction cost: ${correction_cost:.4f}")
+
+                        # Add correction cost to main cost tracker manually
+                        correction_model = config.get('output', {}).get('correction_model', 'gpt-4o')
+
+                        # Estimate tokens for correction cost (rough approximation)
+                        # Since we don't have exact token counts from corrector, estimate based on cost
+                        estimated_total_tokens = int(correction_cost / 0.000005)  # Rough estimate using gpt-4o rates
+                        estimated_input = estimated_total_tokens // 3
+                        estimated_output = estimated_total_tokens - estimated_input
+
+                        # Track the correction cost in the main cost tracker
+                        cost_tracker.track_api_call(estimated_input, estimated_output, correction_model, "correction")
+
+                        # Now append to cost.md
+                        cost_tracker.append_to_cost_md("Proposal Correction", correction_model)
+                else:
+                    logger.info("Skipping correction phase as requested by user.")
+
         logger.info("=" * 60)
         logger.info("PROPOSAL GENERATION COMPLETED SUCCESSFULLY")
         logger.info(f"Generation Time: {duration:.2f} seconds")
@@ -425,6 +483,11 @@ async def main():
 
         cost_summary = generator.get_cost_summary()
         logger.info(f"Total Cost: ${cost_summary['total_cost']:.4f}")
+
+        # Append cost to cost.md file using model from config
+        model_used = config.get('openai', {}).get('model', 'gpt-4o')
+        cost_tracker.append_to_cost_md("Proposal Generation", model_used)
+
         logger.info("=" * 60)
 
     except Exception as e:
@@ -437,8 +500,10 @@ async def main():
 async def create_request_from_rfp(pdf_path: str, rfp_config: dict, config: dict, logger) -> ProposalRequest:
     """Create ProposalRequest with auto-extracted information"""
 
-    # Initialize RFP extractor
-    extractor = RFPExtractor(config)
+    # Initialize RFP extractor with cost tracker
+    from core.simple_cost_tracker import SimpleCostTracker
+    cost_tracker = SimpleCostTracker()
+    extractor = RFPExtractor(config, cost_tracker)
 
     # Extract information from PDF
     logger.info("Auto-extracting client information from RFP...")
@@ -468,10 +533,36 @@ async def create_request_from_rfp(pdf_path: str, rfp_config: dict, config: dict,
             context = "\n".join([chunk['text'][:300] for chunk in chunks[:2]])
             requirements[key] = context
 
-    # Create request with extracted info
+    # Create request with extracted info (use filename only if extraction truly fails)
+    client_name = extracted_info.get('client_name', '').strip()
+    project_name = extracted_info.get('project_name', '').strip()
+
+    # Define terms that indicate extraction failure
+    generic_terms = ['unknown', 'client', 'project', 'rfp', 'company', 'organization']
+
+    def is_generic_name(name):
+        if not name:
+            return True
+        name_lower = name.lower()
+        return any(term in name_lower for term in generic_terms) and len(name.split()) < 4
+
+    # Only use filename fallback if we got truly generic or empty results
+    if is_generic_name(client_name) or is_generic_name(project_name):
+        logger.warning(f"Extracted names appear generic - Client: '{client_name}', Project: '{project_name}'")
+        logger.warning("This suggests RFP extraction may have failed. Check if the PDF contains clear client/project information.")
+
+        from pathlib import Path
+        base_name = Path(pdf_path).stem.replace('_', ' ').title()
+        if is_generic_name(client_name):
+            client_name = f"Client from {base_name}"
+        if is_generic_name(project_name):
+            project_name = f"Project from {base_name}"
+    else:
+        logger.info(f"✅ Successfully extracted: Client='{client_name}', Project='{project_name}'")
+
     request = ProposalRequest(
-        client_name=extracted_info.get('client_name') or 'Unknown Client',
-        project_name=extracted_info.get('project_name') or 'RFP Project',
+        client_name=client_name,
+        project_name=project_name,
         project_type=extracted_info.get('project_type', 'general'),
         requirements=requirements,
         timeline=extracted_info.get('timeline', 'As per RFP requirements'),

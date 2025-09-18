@@ -107,7 +107,7 @@ class ProposalGenerator:
     
     def _validate_sdk_agents(self):
         """Validate that all required SDK agents are available"""
-        required_agents = ["coordinator", "content_generator", "researcher", "budget_calculator", "chart_generator"]
+        required_agents = ["coordinator", "content_generator", "researcher", "budget_calculator"]
         
         for agent_name in required_agents:
             try:
@@ -146,6 +146,8 @@ class ProposalGenerator:
         logger.info("Enhancing proposal with additional processing...")
         
         # Add enhanced metadata
+        if 'metadata' not in proposal or not isinstance(proposal.get('metadata'), dict):
+            proposal['metadata'] = {}
         proposal['metadata']['enhancement_completed'] = datetime.now().isoformat()
         proposal['metadata']['processor_version'] = "SDK-2.0"
         
@@ -158,10 +160,14 @@ class ProposalGenerator:
             
             if validation['is_valid']:
                 enhanced_sections[section_name] = section_data
+                if 'metadata' not in enhanced_sections[section_name] or not isinstance(enhanced_sections[section_name].get('metadata'), dict):
+                    enhanced_sections[section_name]['metadata'] = {}
                 enhanced_sections[section_name]['metadata']['validation'] = validation
             else:
                 logger.warning(f"Section '{section_name}' failed validation: {validation.get('feedback', 'Unknown issue')}")
                 enhanced_sections[section_name] = section_data
+                if 'metadata' not in enhanced_sections[section_name] or not isinstance(enhanced_sections[section_name].get('metadata'), dict):
+                    enhanced_sections[section_name]['metadata'] = {}
                 enhanced_sections[section_name]['metadata']['validation'] = validation
                 enhanced_sections[section_name]['metadata']['requires_review'] = True
         
@@ -194,6 +200,9 @@ class ProposalGenerator:
     async def _finalize_proposal(self, proposal: Dict[str, Any], request: ProposalRequest) -> Dict[str, Any]:
         """Finalize the proposal with outputs and quality scoring"""
         logger.info("Finalizing proposal with outputs and quality scoring...")
+
+        if 'metadata' not in proposal or not isinstance(proposal.get('metadata'), dict):
+            proposal['metadata'] = {}
 
         # Calculate overall quality score
         sections = proposal.get('generated_sections', {})
@@ -244,6 +253,8 @@ class ProposalGenerator:
             logger.info("DOCX generation is disabled in configuration")
 
         # Add completion timestamp
+        if 'metadata' not in proposal or not isinstance(proposal.get('metadata'), dict):
+            proposal['metadata'] = {}
         proposal['metadata']['finalization_completed'] = datetime.now().isoformat()
         logger.info("Proposal finalization completed")
         return proposal
@@ -314,8 +325,7 @@ class ProposalGenerator:
         
         return standard_outline
     
-    # Legacy methods removed - now handled by SDK runner and agents
-    # Chart generation, section regeneration, and executive summary 
+    # Legacy methods removed - now handled by SDK runner and agent
     # are all managed by the SDK agents through the coordinator
 
 # SDK-integrated main function for testing

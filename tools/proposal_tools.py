@@ -11,16 +11,62 @@ import logging
 import os
 import yaml
 from pathlib import Path
+import numpy as np
 
 # Import required components from core modules
 from core.rag_retriever import RAGRetriever
-from core.chart_generator import ChartGenerator
+
+# Import chart tools
+try:
+    from tools.chart_tools import (
+        create_budget_pie_chart,
+        create_timeline_chart,
+        create_resource_chart,
+        create_roi_chart,
+        create_risk_matrix_chart,
+        create_gantt_chart,
+        create_chart_section,
+        generate_multiple_charts,
+        extract_data_from_proposal
+    )
+    CHARTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Chart tools not available: {e}")
+    CHARTS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 # Global configuration - loaded once
 _config = None
 _rag_retriever = None
+
+def _json_convert(value):
+    """Recursively convert numpy/pandas types to JSON-serializable Python types."""
+    try:
+        # Numpy scalars
+        if isinstance(value, (np.generic,)):
+            return value.item()
+        # Pandas NaN/NaT handling
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, dict):
+        return {str(k): _json_convert(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_convert(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_json_convert(v) for v in value)
+    # Pandas objects
+    if hasattr(value, 'to_dict') and not isinstance(value, (str, bytes)):
+        try:
+            return _json_convert(value.to_dict())
+        except Exception:
+            pass
+    return value
+
+def _json_dumps(data) -> str:
+    return json.dumps(_json_convert(data), default=str)
 
 def _get_config():
     """Load configuration once and cache it"""
@@ -39,20 +85,7 @@ def _get_rag_retriever():
         _rag_retriever = RAGRetriever(config)
     return _rag_retriever
 
-def _get_chart_generator(output_format='static'):
-    """Get chart generator instance with specified output format"""
-    # Create a new instance each time to ensure proper format
-    return ChartGenerator(output_format=output_format)
 
-def _get_output_format():
-    """Get the current output format from thread-local storage or default to static"""
-    import threading
-    return getattr(threading.current_thread(), '_chart_output_format', 'static')
-
-def _set_output_format(format_type):
-    """Set the output format for chart generation in current thread"""
-    import threading
-    threading.current_thread()._chart_output_format = format_type
 
 # ============= WEB SEARCH TOOLS =============
 
@@ -258,7 +291,7 @@ def calculate_project_costs(
             "project_type": project_type,
             "contingency_rate": contingency_rate
         }
-        return json.dumps(result)
+        return _json_dumps(result)
         
     except Exception as e:
         logger.error(f"Cost calculation error: {str(e)}")
@@ -266,7 +299,7 @@ def calculate_project_costs(
             "total_cost": 0,
             "error": str(e)
         }
-        return json.dumps(result)
+        return _json_dumps(result)
 
 @function_tool
 def generate_timeline(
@@ -485,7 +518,7 @@ def analyze_risks(
 def get_rag_context(
     query: str,
     pdf_path: str,
-    max_tokens: int = 2000
+    max_completion_tokens: int = 2000
 ) -> str:
     """
     Retrieve relevant context from RFP documents using RAG pipeline
@@ -493,7 +526,7 @@ def get_rag_context(
     Args:
         query: The query to search for in the document
         pdf_path: Path to the PDF document to search
-        max_tokens: Maximum tokens to return in context
+        max_completion_tokens: Maximum tokens to return in context
         
     Returns:
         Formatted context string with relevant information
@@ -506,7 +539,7 @@ def get_rag_context(
             rag_retriever.process_and_index_pdf(pdf_path)
         
         # Get context for the query
-        context = rag_retriever.get_context_for_agent(query, pdf_path, max_tokens)
+        context = rag_retriever.get_context_for_agent(query, pdf_path, max_completion_tokens)
         
         logger.info(f"Retrieved RAG context for query: {query[:50]}...")
         return context
@@ -515,130 +548,7 @@ def get_rag_context(
         logger.error(f"RAG context retrieval error: {str(e)}")
         return f"Error retrieving context: {str(e)}"
 
-# ============= CHART GENERATION TOOLS =============
 
-@function_tool
-def generate_gantt_chart(timeline_data: str) -> str:
-    """
-    Generate Gantt chart for project timeline
-    
-    Args:
-        timeline_data: JSON string containing timeline phases and information
-        
-    Returns:
-        HTML string containing the generated Gantt chart
-    """
-    try:
-        # Parse timeline data from JSON string
-        if timeline_data:
-            try:
-                data_dict = json.loads(timeline_data)
-            except json.JSONDecodeError:
-                data_dict = {}
-        else:
-            data_dict = {}
-            
-        # Use thread-local output format or default to static
-        output_format = _get_output_format()
-        chart_generator = _get_chart_generator(output_format=output_format)
-        
-        # Transform timeline data to expected format
-        phases = []
-        for phase in data_dict.get('timeline', []):
-            phases.append({
-                'name': phase.get('phase', 'Unknown Phase'),
-                'duration': phase.get('duration_weeks', 4),
-                'color': None  # Let chart generator assign colors
-            })
-        
-        chart_data = {
-            'title': 'Project Timeline',
-            'phases': phases
-        }
-        
-        chart_html = chart_generator.generate_gantt_chart(chart_data)
-        logger.info("Generated Gantt chart successfully")
-        return chart_html
-        
-    except Exception as e:
-        logger.error(f"Gantt chart generation error: {str(e)}")
-        return f'<div class="chart-error">Error generating Gantt chart: {str(e)}</div>'
-
-@function_tool
-def create_budget_chart(budget_data: str) -> str:
-    """
-    Create budget breakdown visualization chart
-    
-    Args:
-        budget_data: JSON string containing budget breakdown information
-        
-    Returns:
-        HTML string containing the generated budget chart
-    """
-    try:
-        # Parse budget data from JSON string
-        if budget_data:
-            try:
-                data_dict = json.loads(budget_data)
-            except json.JSONDecodeError:
-                data_dict = {}
-        else:
-            data_dict = {}
-            
-        # Use thread-local output format or default to static
-        output_format = _get_output_format()
-        chart_generator = _get_chart_generator(output_format=output_format)
-        chart_html = chart_generator.create_budget_chart(data_dict)
-        logger.info("Generated budget chart successfully")
-        return chart_html
-        
-    except Exception as e:
-        logger.error(f"Budget chart generation error: {str(e)}")
-        return f'<div class="chart-error">Error generating budget chart: {str(e)}</div>'
-
-@function_tool
-def build_risk_matrix(risks_json: str) -> str:
-    """
-    Build risk assessment matrix visualization
-    
-    Args:
-        risks_json: JSON string containing list of risk dictionaries with probability and impact data
-                   Example: '[{"risk": "Technical Risk", "probability": "Medium", "impact": "High"}]'
-        
-    Returns:
-        HTML string containing the generated risk matrix chart
-    """
-    try:
-        # Parse risks from JSON
-        risks = json.loads(risks_json)
-        
-        # Use thread-local output format or default to static
-        output_format = _get_output_format()
-        chart_generator = _get_chart_generator(output_format=output_format)
-        
-        # Convert risk data to chart format
-        chart_risks = []
-        for risk in risks:
-            # Map text values to numeric
-            prob_map = {'Low': 1, 'Medium': 3, 'High': 4, 'Very High': 5}
-            impact_map = {'Low': 1, 'Medium': 3, 'High': 4, 'Very High': 5}
-            
-            probability = prob_map.get(risk.get('probability', 'Medium'), 3)
-            impact = impact_map.get(risk.get('impact', 'Medium'), 3)
-            
-            chart_risks.append({
-                'name': risk.get('risk', 'Unknown Risk'),
-                'probability': probability,
-                'impact': impact
-            })
-        
-        chart_html = chart_generator.build_risk_matrix(chart_risks)
-        logger.info("Generated risk matrix successfully")
-        return chart_html
-        
-    except Exception as e:
-        logger.error(f"Risk matrix generation error: {str(e)}")
-        return f'<div class="chart-error">Error generating risk matrix: {str(e)}</div>'
 
 # ============= FORMATTING TOOLS =============
 
@@ -819,12 +729,12 @@ def get_company_skills() -> str:
             'external_skills': external_summary,
             'total_skill_categories': len(set(internal_summary['skill_categories'] + external_summary['skill_categories']))
         }
-        return json.dumps(result)
+        return _json_dumps(result)
         
     except Exception as e:
         logger.error(f"Error getting company skills: {str(e)}")
         result = {'error': str(e)}
-        return json.dumps(result)
+        return _json_dumps(result)
 
 @function_tool
 def validate_proposal_requirements(requirements: str) -> str:
@@ -883,3 +793,225 @@ def validate_proposal_requirements(requirements: str) -> str:
         logger.error(f"Validation error: {str(e)}")
         result = {'error': str(e), 'is_valid': False}
         return json.dumps(result)
+
+# ============= CHART GENERATION TOOLS =============
+
+@function_tool
+def generate_proposal_charts(
+    proposal_data: str,
+    chart_types: str = '["budget", "timeline", "resources", "roi"]'
+) -> str:
+    """
+    Generate charts for proposal visualization in PDF format
+
+    Args:
+        proposal_data: JSON string containing proposal data for chart generation
+        chart_types: JSON string array of chart types to generate
+                    Options: ["budget", "timeline", "resources", "roi", "risks", "gantt"]
+
+    Returns:
+        JSON string containing generated chart HTML and metadata
+    """
+    try:
+        if not CHARTS_AVAILABLE:
+            return json.dumps({
+                "error": "Chart generation not available - missing dependencies",
+                "charts": {},
+                "metadata": {"charts_generated": 0}
+            })
+
+        # Parse inputs
+        try:
+            data = json.loads(proposal_data) if proposal_data else {}
+            types = json.loads(chart_types) if chart_types else ["budget", "timeline"]
+        except json.JSONDecodeError as e:
+            return json.dumps({
+                "error": f"Invalid JSON input: {str(e)}",
+                "charts": {},
+                "metadata": {"charts_generated": 0}
+            })
+
+        charts = {}
+        chart_sections = {}
+
+        logger.info(f"Generating charts: {types}")
+
+        for chart_type in types:
+            try:
+                # Extract chart-specific data from proposal data
+                chart_data = extract_data_from_proposal(data, chart_type)
+
+                if chart_type == "budget":
+                    chart_html = create_budget_pie_chart(chart_data)
+                    charts["budget_breakdown"] = chart_html
+                    chart_sections["budget_section"] = create_chart_section(
+                        "Budget Breakdown",
+                        chart_html,
+                        "Visual breakdown of project costs by category"
+                    )
+
+                elif chart_type == "timeline":
+                    chart_html = create_timeline_chart(chart_data)
+                    charts["timeline"] = chart_html
+                    chart_sections["timeline_section"] = create_chart_section(
+                        "Project Timeline",
+                        chart_html,
+                        "Cost distribution and cumulative spend over project duration"
+                    )
+
+                elif chart_type == "resources":
+                    chart_html = create_resource_chart(chart_data)
+                    charts["resource_allocation"] = chart_html
+                    chart_sections["resources_section"] = create_chart_section(
+                        "Resource Allocation",
+                        chart_html,
+                        "Team composition showing seniority levels by role"
+                    )
+
+                elif chart_type == "roi":
+                    chart_html = create_roi_chart(chart_data)
+                    charts["roi_projection"] = chart_html
+                    chart_sections["roi_section"] = create_chart_section(
+                        "ROI Projection",
+                        chart_html,
+                        "Return on investment analysis over time"
+                    )
+
+                elif chart_type == "risks":
+                    chart_html = create_risk_matrix_chart(chart_data)
+                    charts["risk_matrix"] = chart_html
+                    chart_sections["risk_section"] = create_chart_section(
+                        "Risk Assessment Matrix",
+                        chart_html,
+                        "Risk analysis showing probability vs impact"
+                    )
+
+                elif chart_type == "gantt":
+                    chart_html = create_gantt_chart(chart_data)
+                    charts["gantt_chart"] = chart_html
+                    chart_sections["gantt_section"] = create_chart_section(
+                        "Project Timeline (Gantt)",
+                        chart_html,
+                        "Detailed project schedule with phases and dependencies"
+                    )
+
+                else:
+                    logger.warning(f"Chart type '{chart_type}' not supported or data missing")
+
+            except Exception as chart_error:
+                logger.error(f"Failed to generate {chart_type} chart: {chart_error}")
+                charts[f"{chart_type}_error"] = f"<div class='chart-error'>Failed to generate {chart_type} chart: {str(chart_error)}</div>"
+
+        result = {
+            "charts": charts,
+            "chart_sections": chart_sections,
+            "metadata": {
+                "charts_generated": len([k for k in charts.keys() if not k.endswith('_error')]),
+                "total_requested": len(types),
+                "pdf_optimized": True,
+                "generation_timestamp": datetime.now().isoformat()
+            }
+        }
+
+        logger.info(f"Generated {result['metadata']['charts_generated']}/{result['metadata']['total_requested']} charts")
+        return json.dumps(result)
+
+    except Exception as e:
+        logger.error(f"Chart generation error: {str(e)}")
+        return json.dumps({
+            "error": str(e),
+            "charts": {},
+            "metadata": {"charts_generated": 0}
+        })
+
+@function_tool
+def create_budget_chart(budget_data: str) -> str:
+    """
+    Create a budget breakdown pie chart
+
+    Args:
+        budget_data: JSON string with budget categories and values
+                    Example: '{"categories": ["Dev", "QA"], "values": [100000, 50000]}'
+
+    Returns:
+        Base64 encoded chart HTML for PDF embedding
+    """
+    try:
+        if not CHARTS_AVAILABLE:
+            return "<div class='chart-unavailable'>Chart generation not available</div>"
+
+        data = json.loads(budget_data)
+        return create_budget_pie_chart(data)
+
+    except Exception as e:
+        logger.error(f"Budget chart creation error: {str(e)}")
+        return f"<div class='chart-error'>Budget chart error: {str(e)}</div>"
+
+@function_tool
+def create_timeline_visualization(timeline_data: str) -> str:
+    """
+    Create a project timeline chart showing costs over time
+
+    Args:
+        timeline_data: JSON string with timeline information
+                      Example: '{"months": ["M1", "M2"], "costs": [50000, 75000], "cumulative": [50000, 125000]}'
+
+    Returns:
+        Base64 encoded chart HTML for PDF embedding
+    """
+    try:
+        if not CHARTS_AVAILABLE:
+            return "<div class='chart-unavailable'>Chart generation not available</div>"
+
+        data = json.loads(timeline_data)
+        return create_timeline_chart(data)
+
+    except Exception as e:
+        logger.error(f"Timeline chart creation error: {str(e)}")
+        return f"<div class='chart-error'>Timeline chart error: {str(e)}</div>"
+
+@function_tool
+def create_resource_visualization(resource_data: str) -> str:
+    """
+    Create a resource allocation chart showing team composition
+
+    Args:
+        resource_data: JSON string with resource allocation data
+                      Example: '{"roles": ["Dev", "QA"], "senior": [2, 1], "mid": [3, 2], "junior": [2, 1]}'
+
+    Returns:
+        Base64 encoded chart HTML for PDF embedding
+    """
+    try:
+        if not CHARTS_AVAILABLE:
+            return "<div class='chart-unavailable'>Chart generation not available</div>"
+
+        data = json.loads(resource_data)
+        return create_resource_chart(data)
+
+    except Exception as e:
+        logger.error(f"Resource chart creation error: {str(e)}")
+        return f"<div class='chart-error'>Resource chart error: {str(e)}</div>"
+
+@function_tool
+def extract_chart_data_from_proposal(proposal_content: str, data_type: str) -> str:
+    """
+    Extract data from proposal content for chart generation
+
+    Args:
+        proposal_content: Full proposal content text
+        data_type: Type of data to extract (budget, timeline, resources, roi, risks)
+
+    Returns:
+        JSON string with extracted data ready for chart generation
+    """
+    try:
+        if not CHARTS_AVAILABLE:
+            return json.dumps({"error": "Chart data extraction not available"})
+
+        extracted_data = extract_data_from_proposal(proposal_content, data_type)
+        return json.dumps(extracted_data)
+
+    except Exception as e:
+        logger.error(f"Chart data extraction error: {str(e)}")
+        return json.dumps({"error": str(e)})
