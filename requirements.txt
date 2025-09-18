@@ -1,5 +1,6 @@
 # Core Dependencies
 openai>=1.40.0
+openai-agents>=0.1.0
 tiktoken>=0.5.0
 tenacity>=8.2.0
 plotly>=5.20.0
@@ -16,12 +17,6 @@ markdown>=3.5.0
 beautifulsoup4>=4.12.0
 nest-asyncio>=1.5.0  # For handling async event loops in Jupyter/async contexts
 
-# API Server
-fastapi>=0.111.0
-uvicorn[standard]>=0.30.0
-python-multipart>=0.0.9  # For file uploads in FastAPI
-pydantic>=2.6.0
-
 # PDF Processing
 PyPDF2>=3.0.0
 pdfplumber>=0.9.0
@@ -34,7 +29,7 @@ tavily-python>=0.3.0  # Alternative to OpenAI browsing
 
 # PDF Export
 weasyprint>=60.0
-playwright>=1.40.0  # For chart screenshots in PDF
+playwright>=1.40.0  
 
 # LangChain for Enhanced Features
 langchain>=0.2.0
@@ -45,10 +40,9 @@ langchain-community>=0.2.0
 # Additional utilities
 chardet>=5.2.0  # For encoding detection
 python-docx>=1.1.0  # For DOCX export
-pypandoc>=1.15  # For document conversion
+pypandoc-binary>=1.11  # For document conversion (includes pandoc binary)
 markdown-it-py>=3.0.0  # Enhanced markdown processing
 streamlit>=1.36.0  # Web UI
-streamlit-authenticator==0.2.3
 
 # Logging and Monitoring
 colorlog>=6.7.0  # Colored logging output
@@ -58,4 +52,3 @@ pytest>=7.4.0
 pytest-asyncio>=0.21.0
 black>=23.0.0  # Code formatting
 flake8>=6.0.0  # Linting
-openai-agents>=0.2.11
