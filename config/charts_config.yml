@@ -1,0 +1,192 @@
+# Chart Generation Configuration for Proposals
+
+# Global chart settings
+chart_config:
+  # Chart dimensions (optimized for PDF)
+  width: 800
+  height: 500
+  dpi: 300  # High resolution for PDF
+  format: "png"
+
+  # Chart styling
+  background: "white"
+  font_family: "Arial, sans-serif"
+  font_size: 12
+  title_size: 16
+
+  # Color scheme
+  colors:
+    primary: "#1f77b4"
+    secondary: "#ff7f0e"
+    success: "#2ca02c"
+    warning: "#ffc107"
+    danger: "#d62728"
+    neutral: "#7f7f7f"
+    senior: "#1f77b4"
+    mid: "#ff7f0e"
+    junior: "#2ca02c"
+
+  # Color palette for multi-series charts
+  color_palette:
+    - "#1f77b4"
+    - "#ff7f0e"
+    - "#2ca02c"
+    - "#d62728"
+    - "#9467bd"
+    - "#8c564b"
+    - "#e377c2"
+    - "#7f7f7f"
+    - "#bcbd22"
+    - "#17becf"
+
+# Chart types and their configurations
+chart_types:
+  budget:
+    enabled: true
+    default_chart: "pie"
+    title: "Budget Breakdown"
+    description: "Visual breakdown of project costs by category"
+    data_source: "budget_calculation"
+
+  timeline:
+    enabled: true
+    default_chart: "line"
+    title: "Project Timeline"
+    description: "Cost distribution and cumulative spend over project duration"
+    data_source: "timeline_generation"
+    show_cumulative: true
+
+  resources:
+    enabled: true
+    default_chart: "stacked_bar"
+    title: "Resource Allocation"
+    description: "Team composition showing seniority levels by role"
+    data_source: "resource_planning"
+    stack_by: "seniority"
+
+  roi:
+    enabled: true
+    default_chart: "multi_line"
+    title: "ROI Projection"
+    description: "Return on investment analysis over time"
+    data_source: "financial_analysis"
+    show_breakeven: true
+
+  risks:
+    enabled: true
+    default_chart: "scatter"
+    title: "Risk Assessment Matrix"
+    description: "Risk analysis showing probability vs impact"
+    data_source: "risk_analysis"
+    show_quadrants: true
+
+  gantt:
+    enabled: false  # Optional advanced chart
+    default_chart: "timeline"
+    title: "Project Schedule"
+    description: "Detailed project timeline with phases and dependencies"
+    data_source: "project_timeline"
+
+# Section-specific chart configurations
+section_charts:
+  "Executive Summary":
+    enabled: false
+
+  "Project Overview":
+    enabled: true
+    charts: ["budget", "timeline"]
+    layout: "side_by_side"
+
+  "Budget and Pricing":
+    enabled: true
+    charts: ["budget"]
+    layout: "single"
+
+  "Timeline and Milestones":
+    enabled: true
+    charts: ["timeline", "gantt"]
+    layout: "stacked"
+
+  "Team and Resources":
+    enabled: true
+    charts: ["resources"]
+    layout: "single"
+
+  "Financial Analysis":
+    enabled: true
+    charts: ["roi", "budget"]
+    layout: "side_by_side"
+
+  "Risk Assessment":
+    enabled: true
+    charts: ["risks"]
+    layout: "single"
+
+  "Appendix":
+    enabled: true
+    charts: ["budget", "timeline", "resources", "roi", "risks"]
+    layout: "grid"
+    title: "Project Analytics"
+
+# Chart generation settings
+generation:
+  # Automatic chart generation based on data availability
+  auto_generate: true
+
+  # Generate charts only when explicitly requested
+  on_demand_only: false
+
+  # Include charts in specific output formats
+  include_in_pdf: true
+  include_in_html: true
+  include_in_docx: false
+
+  # Error handling
+  fallback_on_error: true
+  show_error_messages: false
+
+  # Performance settings
+  cache_charts: false
+  parallel_generation: false
+
+# Integration settings
+integration:
+  # PDF export settings
+  pdf:
+    embed_as_base64: true
+    optimize_for_print: true
+    high_dpi: true
+
+  # HTML export settings
+  html:
+    embed_charts: true
+    interactive: false  # Static charts for PDF compatibility
+
+  # Data extraction settings
+  data_extraction:
+    budget_keywords: ["cost", "budget", "price", "expense"]
+    timeline_keywords: ["month", "quarter", "phase", "milestone"]
+    resource_keywords: ["team", "staff", "developer", "resource"]
+
+# Agent integration
+agents:
+  chart_generator:
+    max_charts_per_request: 6
+    timeout_seconds: 30
+    retry_attempts: 3
+
+  coordinator:
+    request_charts_automatically: true
+    chart_sections: ["Project Overview", "Financial Analysis"]
+
+  budget_calculator:
+    generate_budget_charts: true
+    include_breakdown: true
+    include_timeline: true
+
+# Debugging and development
+debug:
+  enabled: false
+  save_chart_data: false
+  log_chart_generation: true
+  show_generation_time: false
