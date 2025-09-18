@@ -43,7 +43,7 @@ python-docx>=1.1.0  # For DOCX export
 pypandoc-binary>=1.11  # For document conversion (includes pandoc binary)
 markdown-it-py>=3.0.0  # Enhanced markdown processing
 streamlit>=1.36.0  # Web UI
-
+streamlit-authenticator==0.2.3
 # Logging and Monitoring
 colorlog>=6.7.0  # Colored logging output
 

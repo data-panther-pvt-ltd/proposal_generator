@@ -10,6 +10,7 @@ import pandas as pd
 # Import existing functionality
 from main import load_config, setup_logging, get_logger, ProposalGenerator, create_request_from_rfp
 from core.simple_cost_tracker import SimpleCostTracker
+from utils.auth import require_authentication, show_user_info
 
 st.set_page_config(
     page_title=" AI Proposal Generator",
@@ -571,22 +572,29 @@ Cost Summary:
             st.code(summary)
 
 def main():
-    # Professional Header
-    st.markdown("""
-        <div class="main-header">
-            <h1>🚀 AI Proposal Generator</h1>
-            <p>Transform RFPs into winning proposals with enterprise-grade AI technology</p>
-        </div>
-    """, unsafe_allow_html=True)
+    # Require authentication before showing the app
+    is_authenticated, authenticator = require_authentication()
 
-    # Create tabs
-    tab1, tab2 = st.tabs(["🚀 Proposal Generator", "💰 Cost Tracking"])
+    if is_authenticated:
+        # Show user info and logout button in sidebar
+        show_user_info(authenticator, "sidebar")
 
-    with tab1:
-        display_proposal_generator()
+        # Professional Header
+        st.markdown("""
+            <div class="main-header">
+                <h1>🚀 AI Proposal Generator</h1>
+                <p>Transform RFPs into winning proposals with enterprise-grade AI technology</p>
+            </div>
+        """, unsafe_allow_html=True)
 
-    with tab2:
-        display_cost_dashboard()
+        # Create tabs
+        tab1, tab2 = st.tabs(["🚀 Proposal Generator", "💰 Cost Tracking"])
+
+        with tab1:
+            display_proposal_generator()
+
+        with tab2:
+            display_cost_dashboard()
 
 def display_proposal_generator():
 
